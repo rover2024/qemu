@@ -203,8 +203,111 @@ static bool maybe_handle_vm86_trap(CPUX86State *env, int trapnr)
     return false;
 }
 
-void cpu_loop(CPUX86State *env)
-{
+// =================================================================================
+
+#include <dlfcn.h>
+
+struct X64NC_HostRuntimeContext {
+    int Exists;
+
+    void (*SetHostExecuteCallback) (void *);
+    void (*HandleExtraGuestCall) (int, void **);
+};
+
+__thread void *thread_guest_callback = NULL;
+
+static struct X64NC_HostRuntimeContext x64nc_hostrt_ctx;
+
+// =================================================================================
+
+
+// =================================================================================
+// qemu-nc/loaderapi.h
+
+#define X64NC_MAGIC_SYSCALL_INDEX 114514
+
+enum X64NC_MAGIC_SYSCALL_TYPE {
+    X64NC_CheckHealth = 0,
+
+    X64NC_LoadLibrary = 0x1,
+    X64NC_FreeLibrary,
+    X64NC_GetProcAddress,
+    X64NC_GetErrorMessage,
+    X64NC_CallNativeProc,
+    X64NC_WaitForFinished,
+
+    X64NC_LA_ObjOpen,
+    X64NC_LA_ObjClose,
+    X64NC_LA_PreInit,
+    X64NC_LA_SymBind,
+
+    X64NC_RegisterCallThunk,
+};
+
+enum X64NC_MAGIC_SYSCALL_RESULT {
+    X64NC_Result_Success = 0,
+    X64NC_Result_Callback,
+    X64NC_Result_ThreadCreate,
+};
+
+// =================================================================================
+
+static abi_ulong x64nc_magic_call(int num, abi_long arg1,
+                          abi_long arg2, abi_long arg3, abi_long arg4,
+                          abi_long arg5, abi_long arg6, abi_long arg7,
+                          abi_long arg8) {
+
+    void **a = (void **) arg2;
+    switch (arg1) {
+        case X64NC_CheckHealth: {
+            printf("x64nc check health\n");
+            break;
+        }
+        case X64NC_LoadLibrary: {
+            const char *path = a[0];
+            int flags = *(int *)a[1];
+            void **ret = a[2];
+            *ret = dlopen(path, flags);
+            return 0;
+        }
+        case X64NC_FreeLibrary: {
+            void *handle = a[0];
+            int *ret = a[1];
+            *ret = dlclose(handle);
+            return 0;
+        }
+        case X64NC_GetProcAddress: {
+            void *handle = a[0];
+            const char *name = a[1];
+            void **ret = a[2];
+            *ret = dlsym(handle, name);
+            return 0;
+        }
+        case X64NC_GetErrorMessage: {
+            char **ret = a[0];
+            *ret = dlerror();
+            return 0;
+        }
+        case X64NC_CallNativeProc: {
+            thread_guest_callback = (void *) arg3;
+            typedef void (*Func)(void *, void *);
+            Func func = a[0];
+            void *args = a[1];
+            void *ret = a[2];
+            func(args, ret);
+            return 0;
+        }
+        default: {
+            if (x64nc_hostrt_ctx.HandleExtraGuestCall) {
+                x64nc_hostrt_ctx.HandleExtraGuestCall(arg1, a);
+            }
+            break;
+        }
+    }
+    return 0;
+}
+
+static inline void __attribute((always_inline)) cpu_loop_shared(CPUX86State *env, const bool is_callback) {
     CPUState *cs = env_cpu(env);
     int trapnr;
     abi_ulong ret;
@@ -220,6 +323,26 @@ void cpu_loop(CPUX86State *env)
 #ifndef TARGET_X86_64
         case EXCP_SYSCALL:
 #endif
+        {
+            // ======================================================
+            // Handle magic call
+            if (env->regs[R_EAX] == X64NC_MAGIC_SYSCALL_INDEX) {
+                if (__builtin_constant_p(is_callback) && is_callback && env->regs[R_EBX] == X64NC_WaitForFinished) {
+                    return;
+                }
+                ret = x64nc_magic_call(
+                                    env->regs[R_EAX],
+                                    env->regs[R_EBX],
+                                    env->regs[R_ECX],
+                                    env->regs[R_EDX],
+                                    env->regs[R_ESI],
+                                    env->regs[R_EDI],
+                                    env->regs[R_EBP],
+                                    0, 0);
+                break;
+            }
+            // ======================================================
+
             /* linux syscall from int $0x80 */
             ret = do_syscall(env,
                              env->regs[R_EAX],
@@ -236,8 +359,33 @@ void cpu_loop(CPUX86State *env)
                 env->regs[R_EAX] = ret;
             }
             break;
+        }
 #ifdef TARGET_X86_64
         case EXCP_SYSCALL:
+        {
+            // ======================================================
+            // Handle magic call
+            if (env->regs[R_EAX] == X64NC_MAGIC_SYSCALL_INDEX) {
+                // ======================================================
+                // Handle magic call
+                if (env->regs[R_EAX] == X64NC_MAGIC_SYSCALL_INDEX) {
+                    if (__builtin_constant_p(is_callback) && is_callback && env->regs[R_EDI] == X64NC_WaitForFinished) {
+                        return;
+                    }
+                    ret = x64nc_magic_call(
+                                        env->regs[R_EAX],
+                                        env->regs[R_EDI],
+                                        env->regs[R_ESI],
+                                        env->regs[R_EDX],
+                                        env->regs[10],
+                                        env->regs[8],
+                                        env->regs[9],
+                                        0, 0);
+                    break;
+                }
+            }
+            // ======================================================
+
             /* linux syscall from syscall instruction.  */
             ret = do_syscall(env,
                              env->regs[R_EAX],
@@ -254,6 +402,7 @@ void cpu_loop(CPUX86State *env)
                 env->regs[R_EAX] = ret;
             }
             break;
+        }
         case EXCP_VSYSCALL:
             emulate_vsyscall(env);
             break;
@@ -319,6 +468,57 @@ void cpu_loop(CPUX86State *env)
         }
         process_pending_signals(env);
     }
+}
+
+static void x64nc_host_execute_callback(void *callback, void *args, void *ret) {
+    CPUState *cs = thread_cpu;
+    CPUX86State *env = cpu_env(cs);
+
+    // Set the calling result to 1, indicating it's a callback
+    env->regs[R_EAX] = X64NC_Result_Callback;
+
+    // Set callback data block
+    void **next_call = (void **) thread_guest_callback;
+    next_call[0] = callback;
+    next_call[2] = args;
+    next_call[3] = ret;
+
+    // Return to guest
+    cpu_loop_shared(env, true);
+}
+
+void cpu_loop(CPUX86State *env)
+{
+    cpu_loop_shared(env, false);
+}
+
+void init_x64nc(void) {
+    const char *x64nc_lib = getenv("QEMU_X64NC_HOST_RUNTIME");
+    if (!x64nc_lib) {
+        return;
+    }
+
+    void *handle = dlopen(x64nc_lib, RTLD_NOW);
+    if (!handle) {
+        return;
+    }
+
+    void *s1 = dlsym(handle, "_HandleExtraGuestCall");
+    if (!s1) {
+        dlclose(handle);
+        return;
+    }
+
+    void *s2 = dlsym(handle, "_SetHostExecuteCallback");
+    if (!s2) {
+        dlclose(handle);
+        return;
+    }
+
+    x64nc_hostrt_ctx.Exists = 1;
+    x64nc_hostrt_ctx.HandleExtraGuestCall = s1;
+    x64nc_hostrt_ctx.SetHostExecuteCallback = s2;
+    x64nc_hostrt_ctx.SetHostExecuteCallback(x64nc_host_execute_callback);
 }
 
 static void target_cpu_free(void *obj)

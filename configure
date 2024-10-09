@@ -180,7 +180,7 @@ host_cc="cc"
 EXTRA_CFLAGS=""
 EXTRA_CXXFLAGS=""
 EXTRA_OBJCFLAGS=""
-EXTRA_LDFLAGS=""
+EXTRA_LDFLAGS="-ldl"
 
 # Default value for a variable defining feature "foo".
 #  * foo="no"  feature will only be used if --enable-foo arg is given
