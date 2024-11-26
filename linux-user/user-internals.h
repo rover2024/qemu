@@ -74,6 +74,7 @@ void fork_start(void);
 void fork_end(int child);
 
 void init_x64nc(void);
+void x64nc_host_execute_callback(void *thunk, void *callback, void *args, void *ret);
 
 /**
  * probe_guest_base:

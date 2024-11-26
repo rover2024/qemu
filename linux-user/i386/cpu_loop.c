@@ -470,7 +470,7 @@ static inline void __attribute((always_inline)) cpu_loop_shared(CPUX86State *env
     }
 }
 
-static void x64nc_host_execute_callback(void *thunk, void *callback, void *args, void *ret) {
+void x64nc_host_execute_callback(void *thunk, void *callback, void *args, void *ret) {
     CPUState *cs = thread_cpu;
     CPUX86State *env = cpu_env(cs);
 
