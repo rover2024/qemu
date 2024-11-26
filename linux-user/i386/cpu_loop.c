@@ -470,7 +470,7 @@ static inline void __attribute((always_inline)) cpu_loop_shared(CPUX86State *env
     }
 }
 
-static void x64nc_host_execute_callback(void *callback, void *args, void *ret) {
+static void x64nc_host_execute_callback(void *thunk, void *callback, void *args, void *ret) {
     CPUState *cs = thread_cpu;
     CPUX86State *env = cpu_env(cs);
 
@@ -479,7 +479,8 @@ static void x64nc_host_execute_callback(void *callback, void *args, void *ret) {
 
     // Set callback data block
     void **next_call = (void **) thread_guest_callback;
-    next_call[0] = callback;
+    next_call[0] = thunk;
+    next_call[1] = callback;
     next_call[2] = args;
     next_call[3] = ret;
 
@@ -503,13 +504,13 @@ void init_x64nc(void) {
         return;
     }
 
-    void *s1 = dlsym(handle, "_HandleExtraGuestCall");
+    void *s1 = dlsym(handle, "_QEMU_NC_HandleExtraGuestCall");
     if (!s1) {
         dlclose(handle);
         return;
     }
 
-    void *s2 = dlsym(handle, "_SetHostExecuteCallback");
+    void *s2 = dlsym(handle, "_QEMU_NC_SetHostExecuteCallback");
     if (!s2) {
         dlclose(handle);
         return;
