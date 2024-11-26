@@ -307,7 +307,7 @@ static abi_ulong x64nc_magic_call(int num, abi_long arg1,
     return 0;
 }
 
-static inline void __attribute((always_inline)) cpu_loop_shared(CPUX86State *env, const bool is_callback) {
+static inline void __attribute((always_inline)) cpu_loop_shared(CPUX86State *env) {
     CPUState *cs = env_cpu(env);
     int trapnr;
     abi_ulong ret;
@@ -327,7 +327,8 @@ static inline void __attribute((always_inline)) cpu_loop_shared(CPUX86State *env
             // ======================================================
             // Handle magic call
             if (env->regs[R_EAX] == X64NC_MAGIC_SYSCALL_INDEX) {
-                if (__builtin_constant_p(is_callback) && is_callback && env->regs[R_EBX] == X64NC_WaitForFinished) {
+                if (env->regs[R_EBX] == X64NC_WaitForFinished) {
+                    process_pending_signals(env);
                     return;
                 }
                 ret = x64nc_magic_call(
@@ -339,6 +340,7 @@ static inline void __attribute((always_inline)) cpu_loop_shared(CPUX86State *env
                                     env->regs[R_EDI],
                                     env->regs[R_EBP],
                                     0, 0);
+                env->regs[R_EAX] = ret;
                 break;
             }
             // ======================================================
@@ -366,23 +368,21 @@ static inline void __attribute((always_inline)) cpu_loop_shared(CPUX86State *env
             // ======================================================
             // Handle magic call
             if (env->regs[R_EAX] == X64NC_MAGIC_SYSCALL_INDEX) {
-                // ======================================================
-                // Handle magic call
-                if (env->regs[R_EAX] == X64NC_MAGIC_SYSCALL_INDEX) {
-                    if (__builtin_constant_p(is_callback) && is_callback && env->regs[R_EDI] == X64NC_WaitForFinished) {
-                        return;
-                    }
-                    ret = x64nc_magic_call(
-                                        env->regs[R_EAX],
-                                        env->regs[R_EDI],
-                                        env->regs[R_ESI],
-                                        env->regs[R_EDX],
-                                        env->regs[10],
-                                        env->regs[8],
-                                        env->regs[9],
-                                        0, 0);
-                    break;
+                if (env->regs[R_EDI] == X64NC_WaitForFinished) {
+                    process_pending_signals(env);
+                    return;
                 }
+                ret = x64nc_magic_call(
+                                    env->regs[R_EAX],
+                                    env->regs[R_EDI],
+                                    env->regs[R_ESI],
+                                    env->regs[R_EDX],
+                                    env->regs[10],
+                                    env->regs[8],
+                                    env->regs[9],
+                                    0, 0);
+                env->regs[R_EAX] = ret;
+                break;
             }
             // ======================================================
 
@@ -485,33 +485,37 @@ static void x64nc_host_execute_callback(void *thunk, void *callback, void *args,
     next_call[3] = ret;
 
     // Return to guest
-    cpu_loop_shared(env, true);
+    cpu_loop_shared(env);
 }
 
 void cpu_loop(CPUX86State *env)
 {
-    cpu_loop_shared(env, false);
+    cpu_loop_shared(env);
 }
 
 void init_x64nc(void) {
     const char *x64nc_lib = getenv("QEMU_X64NC_HOST_RUNTIME");
     if (!x64nc_lib) {
+        printf("nc: QEMU_X64NC_HOST_RUNTIME not defined.\n");
         return;
     }
 
     void *handle = dlopen(x64nc_lib, RTLD_NOW);
     if (!handle) {
+        printf("nc: failed to open \"%s\".\n", x64nc_lib);
         return;
     }
 
     void *s1 = dlsym(handle, "_QEMU_NC_HandleExtraGuestCall");
     if (!s1) {
+        printf("nc: failed to get address of _QEMU_NC_HandleExtraGuestCall\n");
         dlclose(handle);
         return;
     }
 
     void *s2 = dlsym(handle, "_QEMU_NC_SetHostExecuteCallback");
     if (!s2) {
+        printf("nc: failed to get address of _QEMU_NC_SetHostExecuteCallback\n");
         dlclose(handle);
         return;
     }
