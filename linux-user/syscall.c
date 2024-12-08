@@ -6631,6 +6631,9 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             /* Wait for the child to initialize.  */
             pthread_cond_wait(&info.cond, &info.mutex);
             ret = info.tid;
+
+            x64nc_host_last_thread_id = info.thread;
+            // printf("QEMU pthread_create success: %lx\n", x64nc_host_last_thread_id);
         } else {
             ret = -1;
         }

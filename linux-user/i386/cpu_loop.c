@@ -208,15 +208,18 @@ static bool maybe_handle_vm86_trap(CPUX86State *env, int trapnr)
 #include <dlfcn.h>
 
 struct X64NC_HostRuntimeContext {
-    int Exists;
+    void *LibraryHandle;
+    Lmid_t LibraryMapId;
 
-    void (*SetHostExecuteCallback) (void *);
+    void (*SetThunk) (int, void *);
     void (*HandleExtraGuestCall) (int, void **);
 };
 
-__thread void *thread_guest_callback = NULL;
+__thread void *thread_next_call = NULL;
 
-static struct X64NC_HostRuntimeContext x64nc_hostrt_ctx;
+static struct X64NC_HostRuntimeContext x64nc_hostrt_ctx = {
+    .LibraryMapId = LM_ID_BASE,
+};
 
 // =================================================================================
 
@@ -250,6 +253,14 @@ enum X64NC_MAGIC_SYSCALL_RESULT {
     X64NC_Result_ThreadCreate,
 };
 
+enum X64NC_THUNK_ID {
+    X64NC_Thunk_HostExecuteCallback = 1,
+    X64NC_Thunk_HostExtraEvent,
+    X64NC_Thunk_GetHostLastThreadId,
+    X64NC_Thunk_ThreadCreate,
+    X64NC_Thunk_ThreadExit,
+};
+
 // =================================================================================
 
 static abi_ulong x64nc_magic_call(int num, abi_long arg1,
@@ -267,7 +278,7 @@ static abi_ulong x64nc_magic_call(int num, abi_long arg1,
             const char *path = a[0];
             int flags = *(int *)a[1];
             void **ret = a[2];
-            *ret = dlopen(path, flags);
+            *ret = dlmopen(x64nc_hostrt_ctx.LibraryMapId, path, flags);
             return 0;
         }
         case X64NC_FreeLibrary: {
@@ -289,12 +300,21 @@ static abi_ulong x64nc_magic_call(int num, abi_long arg1,
             return 0;
         }
         case X64NC_CallNativeProc: {
-            thread_guest_callback = (void *) arg3;
-            typedef void (*Func)(void *, void *);
-            Func func = a[0];
-            void *args = a[1];
-            void *ret = a[2];
-            func(args, ret);
+            thread_next_call = (void *) arg3;
+            int convention = (int) (intptr_t) a[3];
+            if (convention == 0) {
+                typedef void (*Func)(void *, void *);
+                Func func = a[0];
+                void *args = a[1];
+                void *ret = a[2];
+                func(args, ret);
+            } else {
+                typedef void *(*Func)(void *);
+                Func func = a[0];
+                void *args = a[1];
+                void **ret = a[2];
+                *ret = func(args);
+            }
             return 0;
         }
         default: {
@@ -474,15 +494,34 @@ void x64nc_host_execute_callback(void *thunk, void *callback, void *args, void *
     CPUState *cs = thread_cpu;
     CPUX86State *env = cpu_env(cs);
 
+    // printf("Call x64nc_host_execute_callback: %p\n", thunk);
+
     // Set the calling result to 1, indicating it's a callback
     env->regs[R_EAX] = X64NC_Result_Callback;
 
     // Set callback data block
-    void **next_call = (void **) thread_guest_callback;
+    void **next_call = (void **) thread_next_call;
     next_call[0] = thunk;
     next_call[1] = callback;
     next_call[2] = args;
     next_call[3] = ret;
+
+    // Return to guest
+    cpu_loop_shared(env);
+}
+
+void x64nc_host_extra_event(int num, void *args) {
+    CPUState *cs = thread_cpu;
+    CPUX86State *env = cpu_env(cs);
+
+    // printf("Call x64nc_host_extra_event: %d\n", num);
+
+    // Set the calling result to `num`, indicating it's an extra event
+    env->regs[R_EAX] = num;
+
+    // Set callback data block
+    void **next_call = (void **) thread_next_call;
+    next_call[0] = args;
 
     // Return to guest
     cpu_loop_shared(env);
@@ -493,6 +532,12 @@ void cpu_loop(CPUX86State *env)
     cpu_loop_shared(env);
 }
 
+__thread pthread_t x64nc_host_last_thread_id;
+
+static pthread_t x64nc_get_host_last_thread_id(void) {
+    return x64nc_host_last_thread_id;
+}
+
 void init_x64nc(void) {
     const char *x64nc_lib = getenv("QEMU_X64NC_HOST_RUNTIME");
     if (!x64nc_lib) {
@@ -500,12 +545,12 @@ void init_x64nc(void) {
         return;
     }
 
-    void *handle = dlopen(x64nc_lib, RTLD_NOW);
+    // void *handle = dlmopen(LM_ID_NEWLM, x64nc_lib, RTLD_NOW);
+    void *handle = dlmopen(LM_ID_BASE, x64nc_lib, RTLD_NOW);
     if (!handle) {
         printf("nc: failed to open \"%s\".\n", x64nc_lib);
         return;
     }
-
     void *s1 = dlsym(handle, "_QEMU_NC_HandleExtraGuestCall");
     if (!s1) {
         printf("nc: failed to get address of _QEMU_NC_HandleExtraGuestCall\n");
@@ -513,17 +558,28 @@ void init_x64nc(void) {
         return;
     }
 
-    void *s2 = dlsym(handle, "_QEMU_NC_SetHostExecuteCallback");
+    void *s2 = dlsym(handle, "_QEMU_NC_SetThunk");
     if (!s2) {
-        printf("nc: failed to get address of _QEMU_NC_SetHostExecuteCallback\n");
+        printf("nc: failed to get address of _QEMU_NC_SetThunk\n");
         dlclose(handle);
         return;
     }
 
-    x64nc_hostrt_ctx.Exists = 1;
+    Lmid_t lmid;
+    if (dlinfo(handle, RTLD_DI_LMID, &lmid) != 0) {
+        printf("nc: failed to get library map id\n");
+        dlclose(handle);
+        return;
+    }
+
+    x64nc_hostrt_ctx.LibraryHandle = handle;
+    // x64nc_hostrt_ctx.LibraryMapId = lmid;
+    
     x64nc_hostrt_ctx.HandleExtraGuestCall = s1;
-    x64nc_hostrt_ctx.SetHostExecuteCallback = s2;
-    x64nc_hostrt_ctx.SetHostExecuteCallback(x64nc_host_execute_callback);
+    x64nc_hostrt_ctx.SetThunk = s2;
+    x64nc_hostrt_ctx.SetThunk(X64NC_Thunk_HostExecuteCallback, x64nc_host_execute_callback);
+    x64nc_hostrt_ctx.SetThunk(X64NC_Thunk_HostExtraEvent, x64nc_host_extra_event);
+    x64nc_hostrt_ctx.SetThunk(X64NC_Thunk_GetHostLastThreadId, x64nc_get_host_last_thread_id);
 }
 
 static void target_cpu_free(void *obj)

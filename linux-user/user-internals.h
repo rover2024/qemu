@@ -75,6 +75,8 @@ void fork_end(int child);
 
 void init_x64nc(void);
 void x64nc_host_execute_callback(void *thunk, void *callback, void *args, void *ret);
+void x64nc_host_extra_event(int num, void *args);
+extern __thread pthread_t x64nc_host_last_thread_id;
 
 /**
  * probe_guest_base:
