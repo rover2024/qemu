@@ -269,7 +269,7 @@ int target_mprotect(abi_ulong start, abi_ulong len, int target_prot)
 static void *my_mmap(void *addr, size_t len, int prot,
 			int flags, int fd, off64_t offset) {
     if (mmap_binary) {
-        if ((long) addr > (long) x64nc_host_execute_callback) {
+        if ((long) addr > (long) my_mmap) {
             addr = 0;
         }
         void *p;
