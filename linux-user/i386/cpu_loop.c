@@ -206,6 +206,7 @@ static bool maybe_handle_vm86_trap(CPUX86State *env, int trapnr)
 // =================================================================================
 
 #include <dlfcn.h>
+#include <link.h>
 
 typedef void (*FP_HandleExtraGuestCall)(int type, void *args[]);
 typedef void *(*FP_GetTranslatorApis)(void);
@@ -256,8 +257,7 @@ enum X64NC_MAGIC_SYSCALL_TYPE {
 
     // Loader Metadata, implemented in HostRuntime
     X64NC_AddCallbackThunk,
-    X64NC_AddLibraryPathMapping,
-    X64NC_GetLibraryPathMapping,
+    X64NC_SearchLibrary,
 
     // Native Proc, implemented in QEMU
     X64NC_CallNativeProc,
@@ -322,12 +322,26 @@ static abi_ulong x64nc_HandleMagicCall(int num, abi_long arg1,
         }
         case X64NC_GetModulePath: {
             void *addr = a[0];
-            const char **ret_ref = a[1];
-            Dl_info info;
-            if (dladdr(addr, &info) == 0) {
-                *ret_ref = NULL;
+            int is_handle = (int) (intptr_t) a[1];
+            const char **ret_ref = a[2];
+            if (is_handle) {
+                struct link_map *lm;
+                if (dlinfo(addr, RTLD_DI_LINKMAP, &lm) == 0) {
+                    if (lm->l_name && lm->l_name[0] != '\0') {
+                        *ret_ref = lm->l_name;
+                    } else {
+                        *ret_ref = NULL;
+                    }
+                } else {
+                    *ret_ref = NULL;
+                }
             } else {
-                *ret_ref = info.dli_fname;
+                Dl_info info;
+                if (dladdr(addr, &info) == 0) {
+                    *ret_ref = NULL;
+                } else {
+                    *ret_ref = info.dli_fname;
+                }
             }
             return 0;
         }
@@ -588,16 +602,16 @@ void cpu_loop(CPUX86State *env)
 }
 
 void init_x64nc(void) {
-    const char *x64nc_lib = getenv("QEMU_X64NC_HOST_RUNTIME");
+    const char *x64nc_lib = getenv("X64NC_HOST_RUNTIME");
     if (!x64nc_lib) {
-        printf("nc: QEMU_X64NC_HOST_RUNTIME not defined.\n");
+        printf("nc: X64NC_HOST_RUNTIME not defined.\n");
         return;
     }
 
     // void *handle = dlmopen(LM_ID_NEWLM, x64nc_lib, RTLD_NOW);
     void *handle = dlmopen(LM_ID_BASE, x64nc_lib, RTLD_NOW);
     if (!handle) {
-        printf("nc: failed to open \"%s\".\n", x64nc_lib);
+        printf("nc: failed to open host runtime \"%s\".\n", x64nc_lib);
         return;
     }
     void *s1 = dlsym(handle, "x64nc_HandleExtraGuestCall");
