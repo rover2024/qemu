@@ -312,7 +312,11 @@ static abi_ulong x64nc_HandleMagicCall(int num, abi_long arg1,
             void *handle = a[0];
             const char *name = a[1];
             void **ret_ref = a[2];
-            *ret_ref = dlsym(handle, name);
+            void *sym = dlsym(handle, name);
+            if (!sym) {
+                sym = dlsym(RTLD_DEFAULT, name);
+            }
+            *ret_ref = sym;
             return 0;
         }
         case X64NC_GetErrorMessage: {
@@ -363,6 +367,9 @@ static abi_ulong x64nc_HandleMagicCall(int num, abi_long arg1,
                     void *args = a[1];
                     void **ret = a[2];
                     *ret = func(args);
+                    void *p = malloc(1000);
+                    printf("QEMU: X64NC_NP_Convention_ThreadEntry over, p=%p\n", p);
+                    do_syscall(cpu_env(thread_cpu), 60, 0, 0, 0, 0, 0, 0, 0, 0);
                 }
                 default:
                     break;

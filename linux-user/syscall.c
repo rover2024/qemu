@@ -6633,7 +6633,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             ret = info.tid;
 
             x64nc_Host_LastPThreadId = info.thread;
-            // printf("QEMU pthread_create success: %lx\n", x64nc_host_last_thread_id);
+            // printf("QEMU pthread_create success: %lx\n", info.thread);
         } else {
             ret = -1;
         }

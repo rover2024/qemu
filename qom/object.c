@@ -638,10 +638,22 @@ static void object_property_del_all(Object *obj)
     ObjectPropertyIterator iter;
     bool released;
 
+    // void *done1[10000];
+    // size_t done1_size = 0;
+
     do {
         released = false;
         object_property_iter_init(&iter, obj);
+
+        // int i = 0;
         while ((prop = object_property_iter_next(&iter)) != NULL) {
+            // for (int i = 0; i < done1_size; ++i) {
+            //     if (done1[i] == prop) {
+            //         goto over;
+            //     }
+            // }
+            // done1[done1_size++] = prop;
+            // printf("object_property_del_all: %d, %s\n", ++i, prop->name);
             if (g_hash_table_add(done, prop)) {
                 if (prop->release) {
                     prop->release(obj, prop->name, prop->opaque);
@@ -649,6 +661,7 @@ static void object_property_del_all(Object *obj)
                     break;
                 }
             }
+            // over:;
         }
     } while (released);
 
