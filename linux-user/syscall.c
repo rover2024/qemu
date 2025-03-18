@@ -6615,7 +6615,17 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
 
         ret = pthread_attr_init(&attr);
         ret = pthread_attr_setstacksize(&attr, NEW_STACK_SIZE);
-        ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        
+        if (x64nc_HostThreadContext.LastThreadAttr) {
+            int state;
+            pthread_attr_getdetachstate(x64nc_HostThreadContext.LastThreadAttr, &state);
+            if (state == PTHREAD_CREATE_DETACHED) {
+                ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+            }
+            x64nc_HostThreadContext.LastThreadAttr = NULL;
+        } else {
+            ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        }
         /* It is not safe to deliver signals until the child has finished
            initializing, so temporarily block all signals.  */
         sigfillset(&sigmask);
@@ -6632,7 +6642,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             pthread_cond_wait(&info.cond, &info.mutex);
             ret = info.tid;
 
-            x64nc_Host_LastPThreadId = info.thread;
+            x64nc_HostThreadContext.LastThreadId = info.thread;
             // printf("QEMU pthread_create success: %lx\n", info.thread);
         } else {
             ret = -1;

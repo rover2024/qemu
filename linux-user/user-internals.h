@@ -74,7 +74,12 @@ void fork_start(void);
 void fork_end(int child);
 
 void init_x64nc(void);
-extern __thread pthread_t x64nc_Host_LastPThreadId;
+
+struct X64NC_HostThreadContext {
+    const pthread_attr_t *LastThreadAttr;
+    pthread_t LastThreadId;
+};
+extern __thread struct X64NC_HostThreadContext x64nc_HostThreadContext;
 
 /**
  * probe_guest_base:

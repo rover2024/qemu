@@ -367,9 +367,9 @@ static abi_ulong x64nc_HandleMagicCall(int num, abi_long arg1,
                     void *args = a[1];
                     void **ret = a[2];
                     *ret = func(args);
-                    void *p = malloc(1000);
-                    printf("QEMU: X64NC_NP_Convention_ThreadEntry over, p=%p\n", p);
-                    do_syscall(cpu_env(thread_cpu), 60, 0, 0, 0, 0, 0, 0, 0, 0);
+                    // void *p = malloc(1000);
+                    // printf("QEMU: X64NC_NP_Convention_ThreadEntry over, p=%p\n", p);
+                    // do_syscall(cpu_env(thread_cpu), 60, 0, 0, 0, 0, 0, 0, 0, 0);
                 }
                 default:
                     break;
@@ -571,6 +571,8 @@ static void x64nc_Host_NotifyPThreadCreate(pthread_t *thread, const pthread_attr
 
     env->regs[R_EAX] = X64NC_NP_Result_PThreadCreate;
 
+    x64nc_HostThreadContext.LastThreadAttr = attr;
+
     void **next_call = (void **) ThreadNextCall;
     next_call[0] = thread;
     next_call[1] = (void *) attr;
@@ -595,10 +597,10 @@ static void x64nc_Host_NotifyPThreadExit(void *ret) {
     cpu_loop_shared(env);
 }
 
-__thread pthread_t x64nc_Host_LastPThreadId;
+__thread struct X64NC_HostThreadContext x64nc_HostThreadContext;
 
 static pthread_t x64nc_Host_GetLastPThreadId(void) {
-    return x64nc_Host_LastPThreadId;
+    return x64nc_HostThreadContext.LastThreadId;
 }
 
 void cpu_loop(CPUX86State *env)
