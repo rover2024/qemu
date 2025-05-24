@@ -203,8 +203,241 @@ static bool maybe_handle_vm86_trap(CPUX86State *env, int trapnr)
     return false;
 }
 
-void cpu_loop(CPUX86State *env)
-{
+// =================================================================================
+// lorelei/lorehapi.h
+
+#include <dlfcn.h>
+#include <link.h>
+
+typedef void      (*FP_ExecuteCallback)(void * /*thunk*/, void * /*callback*/, void * /*args*/, void * /*ret*/, void * /*metadata*/);
+typedef pthread_t (*FP_GetLastPThreadId)(void);
+typedef void      (*FP_NotifyPThreadCreate)(pthread_t * /*thread*/, const pthread_attr_t * /*attr*/, void *(*) (void *) /*start_routine*/, void * /*arg*/, int * /*ret*/);
+typedef void      (*FP_NotifyPThreadExit)(void * /*ret*/);
+typedef void      (*FP_NotifyHostLibraryOpen)(const char * /*identifier*/);
+
+struct LoreEmuApis {
+    // Executes guest callback
+    FP_ExecuteCallback ExecuteCallback;
+
+    // Get last pthread id
+    FP_GetLastPThreadId GetLastPThreadId;
+
+    // Notify emulator to create thread in guest environment
+    FP_NotifyPThreadCreate NotifyPThreadCreate;
+
+    // Notify emulator to exit thread in guest environment
+    FP_NotifyPThreadExit NotifyPThreadExit;
+
+    // Notify guest runtime to load GTL
+    FP_NotifyHostLibraryOpen NotifyHostLibraryOpen;
+};
+
+typedef struct LoreEmuApis *(*FP_HrtGetEmuApis)(void);
+typedef void                (*FP_HandleExtraGuestCall)(int /*type*/, void ** /*args*/, void * /*ret*/);
+
+struct LORE_EMU_CONTEXT {
+    void *LibraryHandle;
+
+    FP_HrtGetEmuApis HrtGetEmuApis;
+    FP_HandleExtraGuestCall HandleExtraGuestCall;
+};
+
+static struct LORE_EMU_CONTEXT LoreEmuContext = {};
+
+static __thread union LOREUSER_PROC_NEXTCALL *LoreThreadNextCall = NULL;
+
+__thread struct LORE_HOST_THREAD_CONTEXT LoreHostThreadContext;
+
+// =================================================================================
+
+
+// =================================================================================
+// lorelei/loreuser.h
+
+#define LOREUSER_SYSCALL_NUM 114514
+
+enum LOREUSER_CALL_TYPE {
+    LOREUSER_CT_CheckHealth,
+
+    LOREUSER_CT_LoadLibrary,
+    LOREUSER_CT_FreeLibrary,
+    LOREUSER_CT_GetProcAddress,
+    LOREUSER_CT_GetErrorMessage,
+    LOREUSER_CT_GetModulePath,
+    LOREUSER_CT_GetAddressBoundary,
+
+    LOREUSER_CT_InvokeHostProc,
+    LOREUSER_CT_ResumeHostProc, // internal
+
+    LOREUSER_CT_GetLibraryData,
+    LOREUSER_CT_CallHostHelper,
+
+    // internal
+    LOREUSER_CT_LA_ObjOpen,
+    LOREUSER_CT_LA_ObjClose,
+    LOREUSER_CT_LA_PreInit,
+    LOREUSER_CT_LA_SymBind,
+};
+
+enum LOREUSER_PROC_RESULT {
+    LOREUSER_PR_Finished = 0,
+    LOREUSER_PR_Callback,
+    LOREUSER_PR_PThreadCreate,
+    LOREUSER_PR_PThreadExit,
+    LOREUSER_PR_HostLibraryOpen,
+};
+
+enum LOREUSER_PROC_CONVENTION {
+    LOREUSER_PC_Function,
+    LOREUSER_PC_ThreadEntry,
+    LOREUSER_PC_HostCallback,
+};
+
+enum LOREUESR_HELPER_ID {
+    LOREUSER_HI_ExtractPrintFArgs = 1,
+    LOREUSER_HI_ExtractSScanFArgs,
+};
+
+union LOREUSER_PROC_NEXTCALL {
+    // LOREUSER_PR_Callback
+    struct {
+        void *thunk;
+        void *callback;
+        void *args;
+        void *ret;
+        void *metadata;
+    } callback;
+
+    // LOREUSER_PR_PThreadCreate
+    struct {
+        void *thread;
+        void *attr;
+        void *start_routine;
+        void *arg;
+        int *ret;
+    } pthread_create;
+
+    // LOREUSER_PR_PThreadExit
+    struct {
+        void *ret;
+    } pthread_exit;
+
+    // LOREUSER_PR_HostLibraryOpen
+    struct {
+        const char *id;
+    } host_library_open;
+};
+
+// =================================================================================
+
+static uint64_t Lore_HandleMagicCall(int num, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
+    void **a = (void **) arg2;
+    void *r = (void *) arg3;
+    switch (arg1) {
+        case LOREUSER_CT_CheckHealth: {
+            printf("qemu (lorelei): check health\n");
+            break;
+        }
+        case LOREUSER_CT_LoadLibrary: {
+            const char *path = a[0];
+            int flags = (int) (uintptr_t) a[1];
+            void **ret_ref = r;
+            *ret_ref = dlopen(path, flags);
+            return 0;
+        }
+        case LOREUSER_CT_FreeLibrary: {
+            void *handle = a[0];
+            int *ret_ref = r;
+            *ret_ref = dlclose(handle);
+            return 0;
+        }
+        case LOREUSER_CT_GetProcAddress: {
+            void *handle = a[0];
+            const char *name = a[1];
+            void **ret_ref = r;
+            void *sym = dlsym(handle, name);
+            if (!sym) {
+                sym = dlsym(RTLD_DEFAULT, name);
+            }
+            *ret_ref = sym;
+            return 0;
+        }
+        case LOREUSER_CT_GetErrorMessage: {
+            char **ret_ref = r;
+            *ret_ref = dlerror();
+            return 0;
+        }
+        case LOREUSER_CT_GetModulePath: {
+            void *addr = a[0];
+            int is_handle = (int) (intptr_t) a[1];
+            const char **ret_ref = r;
+            if (is_handle) {
+                struct link_map *lm;
+                if (dlinfo(addr, RTLD_DI_LINKMAP, &lm) == 0) {
+                    if (lm->l_name && lm->l_name[0] != '\0') {
+                        *ret_ref = lm->l_name;
+                    } else {
+                        *ret_ref = NULL;
+                    }
+                } else {
+                    *ret_ref = NULL;
+                }
+            } else {
+                Dl_info info;
+                if (dladdr(addr, &info) == 0) {
+                    *ret_ref = NULL;
+                } else {
+                    *ret_ref = info.dli_fname;
+                }
+            }
+            return 0;
+        }
+        case LOREUSER_CT_InvokeHostProc: {
+            LoreThreadNextCall = (void *) r; // save
+            int convention = (int) (intptr_t) a[0];
+            switch (convention) {
+                case LOREUSER_PC_Function: {
+                    typedef void (*Func)(void *, void *, void *);
+                    Func func = a[1];
+                    void *args = a[2];
+                    void *ret = a[3];
+                    void *metadata = a[4];
+                    func(args, ret, metadata);
+                    break;
+                }
+                case LOREUSER_PC_ThreadEntry: {
+                    typedef void *(*Func)(void *);
+                    Func func = a[1];
+                    void *args = a[2];
+                    void **ret_ref = a[3];
+                    *ret_ref = func(args);
+                    break;
+                }
+                case LOREUSER_PC_HostCallback: {
+                    typedef void (*Func)(void *, void *, void *, void *);
+                    Func func = a[1];
+                    void **newArgs = a[2];
+                    void *ret = a[3];
+                    void *metadata = a[4];
+                    func(newArgs[0], newArgs[1], ret, metadata);
+                    break;
+                }
+                default:
+                    break;
+            }
+            return 0;
+        }
+        default: {
+            if (LoreEmuContext.HandleExtraGuestCall) {
+                LoreEmuContext.HandleExtraGuestCall(arg1, a, r);
+            }
+            break;
+        }
+    }
+    return 0;
+}
+
+static inline void cpu_loop_shared(CPUX86State *env) {
     CPUState *cs = env_cpu(env);
     int trapnr;
     abi_ulong ret;
@@ -220,6 +453,26 @@ void cpu_loop(CPUX86State *env)
 #ifndef TARGET_X86_64
         case EXCP_SYSCALL:
 #endif
+        {
+            // ======================================================
+            // Handle magic call
+            if (env->regs[R_EAX] == LOREUSER_SYSCALL_NUM) {
+                // `LOREUSER_CT_ResumeHostProc` means this cpu_loop is a temporary routine called by
+                // host library, and it should return to the host library immediately.
+                if (env->regs[R_EBX] == LOREUSER_CT_ResumeHostProc) {
+                    process_pending_signals(env);
+                    return;
+                }
+                ret = Lore_HandleMagicCall(
+                                    env->regs[R_EAX],
+                                    env->regs[R_EBX],
+                                    env->regs[R_ECX],
+                                    env->regs[R_EDX]);
+                env->regs[R_EAX] = ret;
+                break;
+            }
+            // ======================================================
+
             /* linux syscall from int $0x80 */
             ret = do_syscall(env,
                              env->regs[R_EAX],
@@ -236,8 +489,29 @@ void cpu_loop(CPUX86State *env)
                 env->regs[R_EAX] = ret;
             }
             break;
+        }
 #ifdef TARGET_X86_64
         case EXCP_SYSCALL:
+        {
+            // ======================================================
+            // Handle magic call
+            if (env->regs[R_EAX] == LOREUSER_SYSCALL_NUM) {
+                // `LOREUSER_CT_ResumeHostProc` means this cpu_loop is a temporary routine called by
+                // host library, and it should return to the host library immediately.
+                if (env->regs[R_EDI] == LOREUSER_CT_ResumeHostProc) {
+                    process_pending_signals(env);
+                    return;
+                }
+                ret = Lore_HandleMagicCall(
+                                    env->regs[R_EAX],
+                                    env->regs[R_EDI],
+                                    env->regs[R_ESI],
+                                    env->regs[R_EDX]);
+                env->regs[R_EAX] = ret;
+                break;
+            }
+            // ======================================================
+
             /* linux syscall from syscall instruction.  */
             ret = do_syscall(env,
                              env->regs[R_EAX],
@@ -254,6 +528,7 @@ void cpu_loop(CPUX86State *env)
                 env->regs[R_EAX] = ret;
             }
             break;
+        }
         case EXCP_VSYSCALL:
             emulate_vsyscall(env);
             break;
@@ -319,6 +594,121 @@ void cpu_loop(CPUX86State *env)
         }
         process_pending_signals(env);
     }
+}
+
+// Host library may call these functions to interact with guest environment, the guest runtime
+// should finally use `LOREUSER_CT_ResumeHostProc` to return to the host library.
+static void Lore_EmuEntry_ExecuteCallback(void *thunk, void *callback, void *args, void *ret, void *metadata) {
+    CPUState *cs = thread_cpu;
+    CPUX86State *env = cpu_env(cs);
+
+    env->regs[R_EAX] = LOREUSER_PR_Callback;
+
+    __auto_type next_call = LoreThreadNextCall;
+    next_call->callback.thunk = thunk;
+    next_call->callback.callback = callback;
+    next_call->callback.args = args;
+    next_call->callback.ret = ret;
+    next_call->callback.metadata = metadata;
+
+    // Return to guest
+    cpu_loop_shared(env);
+}
+
+static void Lore_EmuEntry_NotifyPThreadCreate(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg, int *ret) {
+    CPUState *cs = thread_cpu;
+    CPUX86State *env = cpu_env(cs);
+
+    env->regs[R_EAX] = LOREUSER_PR_PThreadCreate;
+
+    LoreHostThreadContext.LastThreadAttr = attr;
+
+    __auto_type next_call = LoreThreadNextCall;
+    next_call->pthread_create.thread = thread;
+    next_call->pthread_create.attr = (void *) attr;
+    next_call->pthread_create.start_routine = start_routine;
+    next_call->pthread_create.arg = arg;
+    next_call->pthread_create.ret = ret;
+
+    // Return to guest
+    cpu_loop_shared(env);
+}
+
+static void Lore_EmuEntry_NotifyPThreadExit(void *ret) {
+    CPUState *cs = thread_cpu;
+    CPUX86State *env = cpu_env(cs);
+
+    env->regs[R_EAX] = LOREUSER_PR_PThreadExit;
+
+    __auto_type next_call = LoreThreadNextCall;
+    next_call->pthread_exit.ret = ret;
+
+    // Return to guest
+    cpu_loop_shared(env);
+}
+
+static pthread_t Lore_EmuEntry_GetLastPThreadId(void) {
+    return LoreHostThreadContext.LastThreadId;
+}
+
+static void Lore_EmuEntry_NotifyHostLibraryOpen(const char *id) {
+    CPUState *cs = thread_cpu;
+    CPUX86State *env = cpu_env(cs);
+
+    env->regs[R_EAX] = LOREUSER_PR_HostLibraryOpen;
+
+    __auto_type next_call = LoreThreadNextCall;
+    next_call->host_library_open.id = id;
+
+    // Return to guest
+    cpu_loop_shared(env);
+}
+
+void cpu_loop(CPUX86State *env)
+{
+    cpu_loop_shared(env);
+
+    __builtin_unreachable();
+}
+
+void init_lorelei(void) {
+    const char *root = getenv("LORELEI_ROOT");
+    if (!root) {
+        printf("qemu (lorelei): LORELEI_ROOT not defined.\n");
+        return;
+    }
+
+    char host_runtime[PATH_MAX];
+    (void) snprintf(host_runtime, PATH_MAX, "%s/lib/lorehrt.so", root);
+
+    void *handle = dlopen(host_runtime, RTLD_NOW);
+    if (!handle) {
+        printf("qemu (lorelei): failed to open host runtime \"%s\".\n", host_runtime);
+        return;
+    }
+    void *s1 = dlsym(handle, "Lore_HandleExtraGuestCall");
+    if (!s1) {
+        printf("nc: failed to get address of Lore_HandleExtraGuestCall\n");
+        dlclose(handle);
+        return;
+    }
+    void *s2 = dlsym(handle, "Lore_HrtGetEmuApis");
+    if (!s2) {
+        printf("nc: failed to get address of Lore_HrtGetEmuApis\n");
+        dlclose(handle);
+        return;
+    }
+
+    LoreEmuContext.LibraryHandle = handle;
+    LoreEmuContext.HandleExtraGuestCall = s1;
+    LoreEmuContext.HrtGetEmuApis = s2;
+
+    struct LoreEmuApis *apis = LoreEmuContext.HrtGetEmuApis();
+    apis->ExecuteCallback = Lore_EmuEntry_ExecuteCallback;
+    apis->GetLastPThreadId = Lore_EmuEntry_GetLastPThreadId;
+    apis->NotifyPThreadCreate = Lore_EmuEntry_NotifyPThreadCreate;
+    apis->NotifyPThreadExit = Lore_EmuEntry_NotifyPThreadExit;
+    apis->NotifyHostLibraryOpen = Lore_EmuEntry_NotifyHostLibraryOpen;
 }
 
 static void target_cpu_free(void *obj)

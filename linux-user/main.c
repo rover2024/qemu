@@ -366,8 +366,9 @@ static void handle_arg_cpu(const char *arg)
 
 static void handle_arg_guest_base(const char *arg)
 {
-    guest_base = strtol(arg, NULL, 0);
-    have_guest_base = true;
+    // Prevent guest base address from being changed
+    // guest_base = strtol(arg, NULL, 0);
+    // have_guest_base = true;
 }
 
 static void handle_arg_reserved_va(const char *arg)
@@ -744,6 +745,9 @@ int main(int argc, char **argv, char **envp)
 
     /* Scan interp_prefix dir for replacement files. */
     init_paths(interp_prefix);
+
+    // Initialize lorelei
+    init_lorelei();
 
     init_qemu_uname_release();
 

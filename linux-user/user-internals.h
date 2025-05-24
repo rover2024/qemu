@@ -73,6 +73,14 @@ void init_qemu_uname_release(void);
 void fork_start(void);
 void fork_end(int child);
 
+void init_lorelei(void);
+
+struct LORE_HOST_THREAD_CONTEXT {
+    const pthread_attr_t *LastThreadAttr;
+    pthread_t LastThreadId;
+};
+extern __thread struct LORE_HOST_THREAD_CONTEXT LoreHostThreadContext;
+
 /**
  * probe_guest_base:
  * @image_name: the executable being loaded
