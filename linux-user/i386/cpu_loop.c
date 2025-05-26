@@ -679,22 +679,22 @@ void init_lorelei(void) {
     }
 
     char host_runtime[PATH_MAX];
-    (void) snprintf(host_runtime, PATH_MAX, "%s/lib/lorehrt.so", root);
+    (void) snprintf(host_runtime, PATH_MAX, "%s/lib/liblorehrt.so", root);
 
-    void *handle = dlopen(host_runtime, RTLD_NOW);
+    void *handle = dlopen(host_runtime, RTLD_NOW | RTLD_GLOBAL);
     if (!handle) {
         printf("qemu (lorelei): failed to open host runtime \"%s\".\n", host_runtime);
         return;
     }
     void *s1 = dlsym(handle, "Lore_HandleExtraGuestCall");
     if (!s1) {
-        printf("nc: failed to get address of Lore_HandleExtraGuestCall\n");
+        printf("qemu (lorelei): failed to get address of Lore_HandleExtraGuestCall\n");
         dlclose(handle);
         return;
     }
     void *s2 = dlsym(handle, "Lore_HrtGetEmuApis");
     if (!s2) {
-        printf("nc: failed to get address of Lore_HrtGetEmuApis\n");
+        printf("qemu (lorelei): failed to get address of Lore_HrtGetEmuApis\n");
         dlclose(handle);
         return;
     }
