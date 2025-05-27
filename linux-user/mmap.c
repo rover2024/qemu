@@ -268,9 +268,9 @@ int target_mprotect(abi_ulong start, abi_ulong len, int target_prot)
 
 static void *my_mmap(void *addr, size_t len, int prot,
 			int flags, int fd, off64_t offset) {
-    if (lore_mmap_binary) {
-        if ((long) addr > (long) my_mmap) {
-            addr = 0;
+    if (lore_mmap_binary || addr == NULL) {
+        if (addr == NULL || (long) addr > (long) my_mmap) {
+            addr = (void *)(HOST_PAGE_ALIGN((long) my_mmap - 0x100000));
         }
         void *p;
         int i = 0;

@@ -330,7 +330,7 @@ union LOREUSER_PROC_NEXTCALL {
 
 // =================================================================================
 
-static uint64_t Lore_HandleMagicCall(int num, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
+static uint64_t Lore_HandleMagicCall(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     void **a = (void **) arg2;
     void *r = (void *) arg3;
     switch (arg1) {
@@ -460,11 +460,9 @@ static inline void cpu_loop_shared(CPUX86State *env) {
                 // `LOREUSER_CT_ResumeHostProc` means this cpu_loop is a temporary routine called by
                 // host library, and it should return to the host library immediately.
                 if (env->regs[R_EBX] == LOREUSER_CT_ResumeHostProc) {
-                    process_pending_signals(env);
                     return;
                 }
                 ret = Lore_HandleMagicCall(
-                                    env->regs[R_EAX],
                                     env->regs[R_EBX],
                                     env->regs[R_ECX],
                                     env->regs[R_EDX]);
@@ -499,11 +497,9 @@ static inline void cpu_loop_shared(CPUX86State *env) {
                 // `LOREUSER_CT_ResumeHostProc` means this cpu_loop is a temporary routine called by
                 // host library, and it should return to the host library immediately.
                 if (env->regs[R_EDI] == LOREUSER_CT_ResumeHostProc) {
-                    process_pending_signals(env);
                     return;
                 }
                 ret = Lore_HandleMagicCall(
-                                    env->regs[R_EAX],
                                     env->regs[R_EDI],
                                     env->regs[R_ESI],
                                     env->regs[R_EDX]);
@@ -611,7 +607,7 @@ static void Lore_EmuEntry_ExecuteCallback(void *thunk, void *callback, void *arg
     next_call->callback.ret = ret;
     next_call->callback.metadata = metadata;
 
-    // Return to guest
+    process_pending_signals(env);
     cpu_loop_shared(env);
 }
 
@@ -630,7 +626,7 @@ static void Lore_EmuEntry_NotifyPThreadCreate(pthread_t *thread, const pthread_a
     next_call->pthread_create.arg = arg;
     next_call->pthread_create.ret = ret;
 
-    // Return to guest
+    process_pending_signals(env);
     cpu_loop_shared(env);
 }
 
@@ -643,7 +639,7 @@ static void Lore_EmuEntry_NotifyPThreadExit(void *ret) {
     __auto_type next_call = LoreThreadNextCall;
     next_call->pthread_exit.ret = ret;
 
-    // Return to guest
+    process_pending_signals(env);
     cpu_loop_shared(env);
 }
 
@@ -660,7 +656,7 @@ static void Lore_EmuEntry_NotifyHostLibraryOpen(const char *id) {
     __auto_type next_call = LoreThreadNextCall;
     next_call->host_library_open.id = id;
 
-    // Return to guest
+    process_pending_signals(env);
     cpu_loop_shared(env);
 }
 
