@@ -244,7 +244,9 @@ struct LORE_EMU_CONTEXT {
 
 static struct LORE_EMU_CONTEXT LoreEmuContext = {};
 
-static __thread union LOREUSER_PROC_NEXTCALL *LoreThreadNextCall = NULL;
+static __thread union LOREUSER_PROC_NEXTCALL *LoreThreadNextCallList[1024];
+
+static __thread int LoreThreadNextCallCount = 0;
 
 __thread struct LORE_HOST_THREAD_CONTEXT LoreHostThreadContext;
 
@@ -393,7 +395,8 @@ static uint64_t Lore_HandleMagicCall(uint64_t arg1, uint64_t arg2, uint64_t arg3
             return 0;
         }
         case LOREUSER_CT_InvokeHostProc: {
-            LoreThreadNextCall = (void *) r; // save
+            LoreThreadNextCallCount++;
+            LoreThreadNextCallList[LoreThreadNextCallCount] = (void *) r; // save
             int convention = (int) (intptr_t) a[0];
             switch (convention) {
                 case LOREUSER_PC_Function: {
@@ -425,6 +428,7 @@ static uint64_t Lore_HandleMagicCall(uint64_t arg1, uint64_t arg2, uint64_t arg3
                 default:
                     break;
             }
+            LoreThreadNextCallCount--;
             return 0;
         }
         default: {
@@ -600,7 +604,7 @@ static void Lore_EmuEntry_ExecuteCallback(void *thunk, void *callback, void *arg
 
     env->regs[R_EAX] = LOREUSER_PR_Callback;
 
-    __auto_type next_call = LoreThreadNextCall;
+    __auto_type next_call = LoreThreadNextCallList[LoreThreadNextCallCount];
     next_call->callback.thunk = thunk;
     next_call->callback.callback = callback;
     next_call->callback.args = args;
@@ -619,7 +623,7 @@ static void Lore_EmuEntry_NotifyPThreadCreate(pthread_t *thread, const pthread_a
 
     LoreHostThreadContext.LastThreadAttr = attr;
 
-    __auto_type next_call = LoreThreadNextCall;
+    __auto_type next_call = LoreThreadNextCallList[LoreThreadNextCallCount];
     next_call->pthread_create.thread = thread;
     next_call->pthread_create.attr = (void *) attr;
     next_call->pthread_create.start_routine = start_routine;
@@ -636,7 +640,7 @@ static void Lore_EmuEntry_NotifyPThreadExit(void *ret) {
 
     env->regs[R_EAX] = LOREUSER_PR_PThreadExit;
 
-    __auto_type next_call = LoreThreadNextCall;
+    __auto_type next_call = LoreThreadNextCallList[LoreThreadNextCallCount];
     next_call->pthread_exit.ret = ret;
 
     process_pending_signals(env);
@@ -653,7 +657,7 @@ static void Lore_EmuEntry_NotifyHostLibraryOpen(const char *id) {
 
     env->regs[R_EAX] = LOREUSER_PR_HostLibraryOpen;
 
-    __auto_type next_call = LoreThreadNextCall;
+    __auto_type next_call = LoreThreadNextCallList[LoreThreadNextCallCount];
     next_call->host_library_open.id = id;
 
     process_pending_signals(env);
