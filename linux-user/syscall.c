@@ -9035,6 +9035,9 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
 
         pthread_mutex_unlock(&clone_lock);
         preexit_cleanup(cpu_env, arg1);
+
+        printf("TOTAL TICKS: %lu\n", LoreTicks);
+
         _exit(arg1);
         return 0; /* avoid warning */
     case TARGET_NR_read:
@@ -10935,6 +10938,7 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
         /* new thread calls */
     case TARGET_NR_exit_group:
         preexit_cleanup(cpu_env, arg1);
+        printf("TOTAL TICKS: %lu\n", LoreTicks);
         return get_errno(exit_group(arg1));
 #endif
     case TARGET_NR_setdomainname:

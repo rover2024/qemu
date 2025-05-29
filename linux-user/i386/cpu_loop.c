@@ -250,6 +250,10 @@ static __thread int LoreThreadNextCallCount = 0;
 
 __thread struct LORE_HOST_THREAD_CONTEXT LoreHostThreadContext;
 
+__thread uint64_t LoreTicks = 0;
+
+__thread uint64_t LoreLastTick = 0;
+
 // =================================================================================
 
 
@@ -332,6 +336,28 @@ union LOREUSER_PROC_NEXTCALL {
 
 // =================================================================================
 
+static inline uint64_t rdtsc(void) {
+#ifdef __x86_64__
+    uint32_t lo, hi;
+    __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+#elif defined(__aarch64__)
+    static inline uint64_t rdtsc() {
+        uint64_t val;
+        __asm__ __volatile__("mrs %0, cntpct_el0" : "=r"(val));
+        return val;
+    }
+#elif defined(__riscv)
+    static inline uint64_t rdtsc() {
+        uint64_t cycles;
+        __asm__ __volatile__("rdcycle %0" : "=r"(cycles));
+        return cycles;
+    }
+#else
+#error "Unsupported architecture"
+#endif
+}
+
 static uint64_t Lore_HandleMagicCall(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     void **a = (void **) arg2;
     void *r = (void *) arg3;
@@ -405,7 +431,9 @@ static uint64_t Lore_HandleMagicCall(uint64_t arg1, uint64_t arg2, uint64_t arg3
                     void *args = a[2];
                     void *ret = a[3];
                     void *metadata = a[4];
+                    LoreLastTick  = rdtsc();
                     func(args, ret, metadata);
+                    LoreTicks += rdtsc() - LoreLastTick;
                     break;
                 }
                 case LOREUSER_PC_ThreadEntry: {
@@ -612,7 +640,10 @@ static void Lore_EmuEntry_ExecuteCallback(void *thunk, void *callback, void *arg
     next_call->callback.metadata = metadata;
 
     process_pending_signals(env);
+    
+    LoreTicks += rdtsc() - LoreLastTick;
     cpu_loop_shared(env);
+    LoreLastTick = rdtsc();
 }
 
 static void Lore_EmuEntry_NotifyPThreadCreate(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg, int *ret) {
@@ -631,7 +662,10 @@ static void Lore_EmuEntry_NotifyPThreadCreate(pthread_t *thread, const pthread_a
     next_call->pthread_create.ret = ret;
 
     process_pending_signals(env);
+
+    LoreTicks += rdtsc() - LoreLastTick;
     cpu_loop_shared(env);
+    LoreLastTick = rdtsc();
 }
 
 static void Lore_EmuEntry_NotifyPThreadExit(void *ret) {
@@ -644,7 +678,10 @@ static void Lore_EmuEntry_NotifyPThreadExit(void *ret) {
     next_call->pthread_exit.ret = ret;
 
     process_pending_signals(env);
+
+    LoreTicks += rdtsc() - LoreLastTick;
     cpu_loop_shared(env);
+    LoreLastTick = rdtsc();
 }
 
 static pthread_t Lore_EmuEntry_GetLastPThreadId(void) {

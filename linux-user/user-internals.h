@@ -81,6 +81,10 @@ struct LORE_HOST_THREAD_CONTEXT {
 };
 extern __thread struct LORE_HOST_THREAD_CONTEXT LoreHostThreadContext;
 
+extern __thread uint64_t LoreTicks;
+
+extern __thread uint64_t LoreLastTick;
+
 /**
  * probe_guest_base:
  * @image_name: the executable being loaded
