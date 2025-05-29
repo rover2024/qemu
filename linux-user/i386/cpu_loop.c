@@ -342,17 +342,13 @@ static inline uint64_t rdtsc(void) {
     __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
     return ((uint64_t)hi << 32) | lo;
 #elif defined(__aarch64__)
-    static inline uint64_t rdtsc() {
-        uint64_t val;
-        __asm__ __volatile__("mrs %0, cntpct_el0" : "=r"(val));
-        return val;
-    }
+    uint64_t val;
+    __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(val));
+    return val;
 #elif defined(__riscv)
-    static inline uint64_t rdtsc() {
-        uint64_t cycles;
-        __asm__ __volatile__("rdcycle %0" : "=r"(cycles));
-        return cycles;
-    }
+    uint64_t cycles;
+    __asm__ __volatile__("rdcycle %0" : "=r"(cycles));
+    return cycles;
 #else
 #error "Unsupported architecture"
 #endif
