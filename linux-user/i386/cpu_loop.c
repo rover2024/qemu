@@ -439,7 +439,9 @@ static uint64_t Lore_HandleMagicCall(uint64_t arg1, uint64_t arg2, uint64_t arg3
                     Func func = a[1];
                     void *args = a[2];
                     void **ret_ref = a[3];
+                    LoreLastTick  = rdtsc();
                     *ret_ref = func(args);
+                    LoreTicks += rdtsc() - LoreLastTick;
                     break;
                 }
                 case LOREUSER_PC_HostCallback: {
@@ -448,7 +450,9 @@ static uint64_t Lore_HandleMagicCall(uint64_t arg1, uint64_t arg2, uint64_t arg3
                     void **newArgs = a[2];
                     void *ret = a[3];
                     void *metadata = a[4];
+                    LoreLastTick  = rdtsc();
                     func(newArgs[0], newArgs[1], ret, metadata);
+                    LoreTicks += rdtsc() - LoreLastTick;
                     break;
                 }
                 default:
