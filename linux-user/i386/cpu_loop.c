@@ -254,6 +254,8 @@ __thread uint64_t LoreTicks = 0;
 
 __thread uint64_t LoreLastTick = 0;
 
+__thread uint64_t LoreTotalTicks = 0;
+
 // =================================================================================
 
 
@@ -336,7 +338,7 @@ union LOREUSER_PROC_NEXTCALL {
 
 // =================================================================================
 
-static inline uint64_t rdtsc(void) {
+uint64_t rdtsc(void) {
 #ifdef __x86_64__
     uint32_t lo, hi;
     __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
@@ -699,6 +701,8 @@ static void Lore_EmuEntry_NotifyHostLibraryOpen(const char *id) {
 
 void cpu_loop(CPUX86State *env)
 {
+    LoreTotalTicks = rdtsc();
+
     cpu_loop_shared(env);
 
     __builtin_unreachable();
