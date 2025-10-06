@@ -3569,7 +3569,12 @@ static void load_elf_interp(const char *filename, struct image_info *info,
     int fd, retval;
     Error *err = NULL;
 
-    fd = open(path(filename), O_RDONLY);
+    const char *interp_name = getenv("LORELEI_INTERP");
+    if (interp_name == NULL) {
+        interp_name = path(filename);
+    }
+    fd = open(interp_name, O_RDONLY);
+
     if (fd < 0) {
         error_setg_file_open(&err, errno, filename);
         error_report_err(err);
