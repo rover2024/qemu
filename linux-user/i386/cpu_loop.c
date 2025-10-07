@@ -24,6 +24,7 @@
 #include "cpu_loop-common.h"
 #include "signal-common.h"
 #include "user-mmap.h"
+#include "exec/user/syscall-filter.h"
 
 /***********************************************************/
 /* CPUX86 core interface */
@@ -203,8 +204,28 @@ static bool maybe_handle_vm86_trap(CPUX86State *env, int trapnr)
     return false;
 }
 
-void cpu_loop(CPUX86State *env)
-{
+static void cpu_loop_shared(CPUX86State *env);
+
+void cpu_loop(CPUX86State *env) {
+    cpu_loop_shared(env);
+    __builtin_unreachable();
+}
+
+static void syscall_filter_context_reentry(CPUX86State *env) {
+    process_pending_signals(env);
+    cpu_loop_shared(env);
+}
+
+static CPUState *syscall_filter_context_get_thread_cpu(void) {
+    return thread_cpu;
+}
+
+static SyscallFilterContext syscall_filter_context = {
+    .reentry = syscall_filter_context_reentry,
+    .get_thread_cpu = syscall_filter_context_get_thread_cpu,
+};
+
+static void cpu_loop_shared(CPUX86State *env) {
     CPUState *cs = env_cpu(env);
     int trapnr;
     abi_ulong ret;
@@ -238,6 +259,15 @@ void cpu_loop(CPUX86State *env)
             break;
 #ifdef TARGET_X86_64
         case EXCP_SYSCALL:
+            // New syscall filter
+            if (syscall_filter && syscall_filter->syscall_num == env->regs[R_EAX]) {
+                int syscall_filter_ret = syscall_filter->handler(&syscall_filter_context, env);
+                if (syscall_filter_ret == SYSCALL_FILTER_EXIT)
+                    return;
+                else if (syscall_filter_ret == SYSCALL_FILTER_HANDLED)
+                    break;
+            }
+
             /* linux syscall from syscall instruction.  */
             ret = do_syscall(env,
                              env->regs[R_EAX],

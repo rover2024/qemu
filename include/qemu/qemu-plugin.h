@@ -708,4 +708,12 @@ uint64_t qemu_plugin_end_code(void);
 QEMU_PLUGIN_API
 uint64_t qemu_plugin_entry_code(void);
 
+
+/**
+ * qemu_plugin_set_vcpu_syscall_filter() - TODO
+ *
+ * TODO
+ */
+bool qemu_plugin_set_vcpu_syscall_filter(qemu_plugin_id_t id, void *filter);
+
 #endif /* QEMU_QEMU_PLUGIN_H */

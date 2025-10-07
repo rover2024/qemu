@@ -47,6 +47,7 @@
 #include "hw/boards.h"
 #else
 #include "qemu.h"
+#include "exec/user/syscall-filter.h"
 #ifdef CONFIG_LINUX
 #include "loader.h"
 #endif
@@ -426,4 +427,16 @@ uint64_t qemu_plugin_entry_code(void)
     entry = ts->info->entry;
 #endif
     return entry;
+}
+
+bool qemu_plugin_set_vcpu_syscall_filter(qemu_plugin_id_t id, void *filter) {
+#ifdef CONFIG_USER_ONLY
+    if (syscall_filter) {
+        return false;
+    }
+    syscall_filter = filter;
+    return true;
+#else
+    return false;
+#endif
 }

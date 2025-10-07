@@ -78,6 +78,7 @@ static const char *seed_optarg;
 unsigned long mmap_min_addr;
 uintptr_t guest_base;
 bool have_guest_base;
+struct SyscallFilter *syscall_filter;
 
 /*
  * Used to implement backwards-compatibility for the `-strace`, and

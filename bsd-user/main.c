@@ -52,6 +52,7 @@
 static bool opt_one_insn_per_tb;
 uintptr_t guest_base;
 bool have_guest_base;
+struct SyscallFilter *syscall_filter;
 /*
  * When running 32-on-64 we should make sure we can fit all of the possible
  * guest address space into a contiguous chunk of virtual host memory.
