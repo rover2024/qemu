@@ -48,6 +48,9 @@ struct qemu_plugin_state {
     struct qht dyn_cb_arr_ht;
     /* How many vcpus were started */
     int num_vcpus;
+
+    qemu_plugin_syscall_filter_cb_t syscall_filter_cb;
+    void (*fork_cpu_loop_entry)(uint64_t);
 };
 
 
@@ -117,5 +120,10 @@ int plugin_num_vcpus(void);
 struct qemu_plugin_scoreboard *plugin_scoreboard_new(size_t element_size);
 
 void plugin_scoreboard_free(struct qemu_plugin_scoreboard *score);
+
+bool plugin_set_syscall_filter(qemu_plugin_id_t id,
+                               qemu_plugin_syscall_filter_cb_t cb);
+
+void plugin_fork_cpu_loop(uint64_t sysret);
 
 #endif /* PLUGIN_H */

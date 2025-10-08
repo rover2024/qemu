@@ -24,6 +24,7 @@
 #include "cpu_loop-common.h"
 #include "signal-common.h"
 #include "user-mmap.h"
+#include "user/syscall-filter.h"
 
 /***********************************************************/
 /* CPUX86 core interface */
@@ -203,8 +204,21 @@ static bool maybe_handle_vm86_trap(CPUX86State *env, int trapnr)
     return false;
 }
 
-void cpu_loop(CPUX86State *env)
-{
+static void cpu_loop_impl(CPUX86State *env);
+
+void cpu_loop(CPUX86State *env) {
+    cpu_loop_impl(env);
+    __builtin_unreachable();
+}
+
+void fork_cpu_loop(uint64_t sysret) {
+    CPUX86State *env = cpu_env(thread_cpu);
+    env->regs[R_EAX] = sysret;
+    process_pending_signals(env);
+    cpu_loop_impl(env);
+}
+
+static void cpu_loop_impl(CPUX86State *env) {
     CPUState *cs = env_cpu(env);
     int trapnr;
     abi_ulong ret;
@@ -220,6 +234,23 @@ void cpu_loop(CPUX86State *env)
 #ifndef TARGET_X86_64
         case EXCP_SYSCALL:
 #endif
+            /* syscall filter */
+            {
+                int syscall_filter_ret = filter_syscall(cs, 
+                             env->regs[R_EAX],
+                             env->regs[R_EBX],
+                             env->regs[R_ECX],
+                             env->regs[R_EDX],
+                             env->regs[R_ESI],
+                             env->regs[R_EDI],
+                             env->regs[R_EBP],
+                             0, 0, &ret);
+                if (syscall_filter_ret == QEMU_PLUGIN_SYSCALL_FILTER_EXIT)
+                    return;
+                else if (syscall_filter_ret == QEMU_PLUGIN_SYSCALL_FILTER_SKIP)
+                    break;
+            }
+
             /* linux syscall from int $0x80 */
             ret = do_syscall(env,
                              env->regs[R_EAX],
@@ -238,6 +269,23 @@ void cpu_loop(CPUX86State *env)
             break;
 #ifdef TARGET_X86_64
         case EXCP_SYSCALL:
+            /* syscall filter */
+            {
+                int syscall_filter_ret = filter_syscall(cs, 
+                                env->regs[R_EAX],
+                                env->regs[R_EDI],
+                                env->regs[R_ESI],
+                                env->regs[R_EDX],
+                                env->regs[10],
+                                env->regs[8],
+                                env->regs[9],
+                                0, 0, &ret);
+                if (syscall_filter_ret == QEMU_PLUGIN_SYSCALL_FILTER_EXIT)
+                    return;
+                else if (syscall_filter_ret == QEMU_PLUGIN_SYSCALL_FILTER_SKIP)
+                    break;
+            }
+
             /* linux syscall from syscall instruction.  */
             ret = do_syscall(env,
                              env->regs[R_EAX],

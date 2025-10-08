@@ -738,6 +738,7 @@ int main(int argc, char **argv, char **envp)
     }
     trace_init_file();
     qemu_plugin_load_list(&plugins, &error_fatal);
+    qemu_plugin_set_fork_cpu_loop_entry(fork_cpu_loop);
 
     /* Zero out regs */
     memset(regs, 0, sizeof(struct target_pt_regs));

@@ -628,3 +628,17 @@ void qemu_plugin_update_ns(const void *handle, int64_t new_time)
     }
 #endif
 }
+
+bool qemu_plugin_set_syscall_filter(qemu_plugin_id_t id,
+                                    qemu_plugin_syscall_filter_cb_t cb)
+{
+#ifdef CONFIG_USER_ONLY
+    return plugin_set_syscall_filter(id, cb);
+#else
+    return false;
+#endif
+}
+
+void qemu_plugin_fork_cpu_loop(uint64_t sysret) {
+    plugin_fork_cpu_loop(sysret);
+}

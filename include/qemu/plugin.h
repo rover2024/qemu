@@ -207,6 +207,22 @@ void qemu_plugin_user_prefork_lock(void);
  */
 void qemu_plugin_user_postfork(bool is_child);
 
+/**
+ * qemu_plugin_filter_syscall(): filter a system call
+ * @cpu: CPUState pointer
+ * @num: syscall number
+ * @a1-a8: syscall arguments
+ * @sysret: pointer to the sysret value, not used if passed
+ * @return: syscall filter return value
+ */
+int qemu_plugin_filter_syscall(CPUState *cpu,
+                               int num, uint64_t a1, uint64_t a2,
+                               uint64_t a3, uint64_t a4, uint64_t a5,
+                               uint64_t a6, uint64_t a7, uint64_t a8,
+                               uint64_t *sysret);
+
+void qemu_plugin_set_fork_cpu_loop_entry(void (*entry)(uint64_t));
+
 #else /* !CONFIG_PLUGIN */
 
 static inline void qemu_plugin_add_opts(void)
@@ -275,6 +291,18 @@ static inline void qemu_plugin_user_prefork_lock(void)
 { }
 
 static inline void qemu_plugin_user_postfork(bool is_child)
+{ }
+
+static inline
+int qemu_plugin_filter_syscall(CPUState *cpu,
+                               int num, uint64_t a1, uint64_t a2,
+                               uint64_t a3, uint64_t a4, uint64_t a5,
+                               uint64_t a6, uint64_t a7, uint64_t a8,
+                               uint64_t *sysret)
+{ }
+
+static inline
+void qemu_plugin_set_fork_cpu_loop_entry(void (*entry)(uint64_t))
 { }
 
 #endif /* !CONFIG_PLUGIN */

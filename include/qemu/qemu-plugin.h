@@ -939,4 +939,48 @@ void qemu_plugin_u64_set(qemu_plugin_u64 entry, unsigned int vcpu_index,
 QEMU_PLUGIN_API
 uint64_t qemu_plugin_u64_sum(qemu_plugin_u64 entry);
 
+/**
+ * enum qemu_plugin_syscall_filter_ret - syscall filter return values
+ *
+ * @QEMU_PLUGIN_SYSCALL_FILTER_PASS: control should continue as usual
+ * @QEMU_PLUGIN_SYSCALL_FILTER_SKIP: syscall is filtered and skipped
+ * @QEMU_PLUGIN_SYSCALL_FILTER_EXIT: current cpu loop should exit
+ *
+ */
+enum qemu_plugin_syscall_filter_ret {
+    QEMU_PLUGIN_SYSCALL_FILTER_PASS = 0,
+    QEMU_PLUGIN_SYSCALL_FILTER_SKIP,
+    QEMU_PLUGIN_SYSCALL_FILTER_EXIT,
+};
+
+/**
+ * typedef qemu_plugin_syscall_filter_cb_t - syscall filter callback
+ * @num: syscall number
+ * @a1-a8: syscall arguments
+ * @sysret: pointer to the sysret value, only used when returning SKIP
+ * @return: syscall filter return value
+ */
+typedef int
+(*qemu_plugin_syscall_filter_cb_t)(uint64_t num, uint64_t a1, uint64_t a2,
+                                   uint64_t a3, uint64_t a4, uint64_t a5,
+                                   uint64_t a6, uint64_t a7, uint64_t a8,
+                                   uint64_t *sysret);
+
+/**
+ * qemu_plugin_set_syscall_filter() - set the unique syscall filter
+ * @id: plugin ID
+ * @cb: callback function to filter the syscall
+ *
+ * Returns true if the filter was set, false if the syscall number is already
+ * registered or if the callback is NULL.
+ */
+bool qemu_plugin_set_syscall_filter(qemu_plugin_id_t id,
+                                    qemu_plugin_syscall_filter_cb_t cb);
+
+/**
+ * qemu_plugin_fork_cpu_loop() - fork a new cpu loop
+ * @sysret: value to return to the child cpu loop
+ */
+void qemu_plugin_fork_cpu_loop(uint64_t sysret);
+
 #endif /* QEMU_QEMU_PLUGIN_H */

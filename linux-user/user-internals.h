@@ -66,6 +66,7 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
                     abi_long arg8);
 extern __thread CPUState *thread_cpu;
 G_NORETURN void cpu_loop(CPUArchState *env);
+void fork_cpu_loop(uint64_t sysret);
 abi_long get_errno(abi_long ret);
 const char *target_strerror(int err);
 int get_osversion(void);

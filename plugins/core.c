@@ -692,6 +692,21 @@ void qemu_plugin_user_postfork(bool is_child)
     }
 }
 
+int qemu_plugin_filter_syscall(CPUState *cpu,
+                               int num, uint64_t a1, uint64_t a2,
+                               uint64_t a3, uint64_t a4, uint64_t a5,
+                               uint64_t a6, uint64_t a7, uint64_t a8,
+                               uint64_t *sysret) {
+    if (plugin.syscall_filter_cb) {
+        return plugin.syscall_filter_cb(num, a1, a2, a3, a4, a5, a6, a7, a8, sysret);
+    }
+    return QEMU_PLUGIN_SYSCALL_FILTER_PASS;
+}
+
+void qemu_plugin_set_fork_cpu_loop_entry(void (*entry)(uint64_t)) {
+    plugin.fork_cpu_loop_entry = entry;
+} 
+
 static bool plugin_dyn_cb_arr_cmp(const void *ap, const void *bp)
 {
     return ap == bp;
@@ -742,4 +757,20 @@ void plugin_scoreboard_free(struct qemu_plugin_scoreboard *score)
 
     g_array_free(score->data, TRUE);
     g_free(score);
+}
+
+bool plugin_set_syscall_filter(qemu_plugin_id_t id,
+                               qemu_plugin_syscall_filter_cb_t cb)
+{
+    if (plugin.syscall_filter_cb) {
+        return false;
+    }
+    plugin.syscall_filter_cb = cb;
+    return true;
+}
+
+void plugin_fork_cpu_loop(uint64_t sysret) {
+    if (plugin.fork_cpu_loop_entry) {
+        plugin.fork_cpu_loop_entry(sysret);
+    }
 }
