@@ -73,6 +73,31 @@ void init_qemu_uname_release(void);
 void fork_start(void);
 void fork_end(int child);
 
+struct LORE_HOST_RUNTIME_CONTEXT {
+    void *handle;
+
+    // call at initialization
+    void (*set_thread_getter)(void *);
+    void (*set_run_task_entry)(void *);
+
+    // call at runtime
+    void (*notify_thread_entry)(void);
+    void (*notify_thread_exit)(void);
+    uint64_t (*dispatch_syscall)(uint64_t, uint64_t, uint64_t,
+                                 uint64_t, uint64_t, uint64_t,
+                                 uint64_t);
+};
+
+extern struct LORE_HOST_RUNTIME_CONTEXT lore_host_runtime_ctx;
+
+struct LORE_HOST_THREAD_CONTEXT {
+    const pthread_attr_t *last_attr;
+    pthread_t last_tid;
+};
+extern __thread struct LORE_HOST_THREAD_CONTEXT lore_host_thread_ctx;
+
+void init_lorelei(void);
+
 /**
  * probe_guest_base:
  * @image_name: the executable being loaded

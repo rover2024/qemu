@@ -6615,7 +6615,17 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
 
         ret = pthread_attr_init(&attr);
         ret = pthread_attr_setstacksize(&attr, NEW_STACK_SIZE);
-        ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        
+        if (lore_host_thread_ctx.last_attr) {
+            int state;
+            pthread_attr_getdetachstate(lore_host_thread_ctx.last_attr, &state);
+            if (state == PTHREAD_CREATE_DETACHED) {
+                ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+            }
+            lore_host_thread_ctx.last_attr = NULL;
+        } else {
+            ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        }
         /* It is not safe to deliver signals until the child has finished
            initializing, so temporarily block all signals.  */
         sigfillset(&sigmask);
@@ -6631,6 +6641,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             /* Wait for the child to initialize.  */
             pthread_cond_wait(&info.cond, &info.mutex);
             ret = info.tid;
+            lore_host_thread_ctx.last_tid = info.thread;
         } else {
             ret = -1;
         }
@@ -8992,6 +9003,9 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
         if (block_signals()) {
             return -QEMU_ERESTARTSYS;
         }
+        if (lore_host_runtime_ctx.notify_thread_exit) {
+            lore_host_runtime_ctx.notify_thread_exit();
+        }
 
         pthread_mutex_lock(&clone_lock);
 
@@ -10922,6 +10936,9 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
         /* new thread calls */
     case TARGET_NR_exit_group:
         preexit_cleanup(cpu_env, arg1);
+        if (lore_host_runtime_ctx.notify_thread_exit) {
+            lore_host_runtime_ctx.notify_thread_exit();
+        }
         return get_errno(exit_group(arg1));
 #endif
     case TARGET_NR_setdomainname:

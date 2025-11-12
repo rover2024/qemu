@@ -47,9 +47,14 @@ static int prepare_binprm(struct linux_binprm *bprm)
     if (!S_ISREG(mode)) {   /* Must be regular file */
         return -EACCES;
     }
+
+    // For convenience, we allow execution of setuid/setgid programs
+    // even if the execute bits are not set.
+#if 0
     if (!(mode & 0111)) {   /* Must have at least one execute bit set */
         return -EACCES;
     }
+#endif
 
     bprm->e_uid = geteuid();
     bprm->e_gid = getegid();

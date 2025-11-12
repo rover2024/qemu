@@ -46,6 +46,8 @@ extern abi_ulong elf_et_dyn_base;
  */
 extern abi_ulong mmap_next_start;
 
+extern int lore_mmap_binary;
+
 int target_mprotect(abi_ulong start, abi_ulong len, int prot);
 abi_long target_mmap(abi_ulong start, abi_ulong len, int prot,
                      int flags, int fd, off_t offset);

@@ -203,8 +203,31 @@ static bool maybe_handle_vm86_trap(CPUX86State *env, int trapnr)
     return false;
 }
 
-void cpu_loop(CPUX86State *env)
-{
+enum {
+    LORE_CLIENT_SYSCALL_NUM = 0x66CCFF,
+};
+
+enum LORE_RequestID {
+    REQUEST_CHECK_CONNECTION = 1,
+    REQUEST_LOG_MESSAGE,
+
+    REQUEST_LOAD_LIBRARY = 0x101,
+    REQUEST_FREE_LIBRARY,
+    REQUEST_GET_PROC_ADDRESS,
+    REQUEST_GET_ERROR_MESSAGE,
+    REQUEST_GET_MODULE_PATH,
+    REQUEST_INVOKE_PROC,
+    REQUEST_GET_THUNK_INFO,
+
+    /// Reserved for internal use.
+    REQUEST_RESUME_PROC,
+};
+
+struct LORE_ClientTask {
+    int id;
+};
+
+static inline void cpu_loop_shared(CPUX86State *env) {
     CPUState *cs = env_cpu(env);
     int trapnr;
     abi_ulong ret;
@@ -238,6 +261,25 @@ void cpu_loop(CPUX86State *env)
             break;
 #ifdef TARGET_X86_64
         case EXCP_SYSCALL:
+            // Handle magic call
+            if (env->regs[R_EAX] == LORE_CLIENT_SYSCALL_NUM) {
+                // `LOREUSER_CT_ResumeHostProc` means this cpu_loop is a temporary routine called by
+                // host library, and it should return to the host library immediately.
+                if (env->regs[R_EDI] == REQUEST_RESUME_PROC) {
+                    return;
+                }
+                ret = lore_host_runtime_ctx.dispatch_syscall(
+                            env->regs[R_EAX],
+                            env->regs[R_EDI],
+                            env->regs[R_ESI],
+                            env->regs[R_EDX],
+                            env->regs[10],
+                            env->regs[8],
+                            env->regs[9]
+                );
+                env->regs[R_EAX] = ret;
+                break;
+            }
             /* linux syscall from syscall instruction.  */
             ret = do_syscall(env,
                              env->regs[R_EAX],
@@ -319,6 +361,81 @@ void cpu_loop(CPUX86State *env)
         }
         process_pending_signals(env);
     }
+}
+
+struct LORE_HOST_RUNTIME_CONTEXT lore_host_runtime_ctx;
+
+__thread struct LORE_HOST_THREAD_CONTEXT lore_host_thread_ctx;
+
+// Host library may call these functions to interact with guest environment, the guest runtime
+// should finally use `REQUEST_RESUME_PROC` to return to the host library.
+static void lorelei_run_task_entry(void *task) {
+    CPUX86State *env = cpu_env(thread_cpu);
+    env->regs[R_EAX] = ((struct LORE_ClientTask *) task)->id;
+    process_pending_signals(env);
+    cpu_loop_shared(env);
+}
+
+static pthread_t lorelei_get_last_pthread_id(void) {
+    return lore_host_thread_ctx.last_tid;
+}
+
+void cpu_loop(CPUX86State *env)
+{
+    if (lore_host_runtime_ctx.notify_thread_entry) {
+        lore_host_runtime_ctx.notify_thread_entry();
+    }
+    cpu_loop_shared(env);
+
+    __builtin_unreachable();
+}
+
+#include <gmodule.h>
+
+void init_lorelei(void) {
+    const char *root = getenv("LORELEI_ROOT");
+    if (!root) {
+        printf("qemu (lorelei): LORELEI_ROOT not defined.\n");
+        return;
+    }
+
+    char path[PATH_MAX];
+    strcpy(path, root);
+    strcat(path, "/lib/libLoreHostRT.so");
+
+    void *handle = g_module_open(path, 0);
+    if (!handle) {
+        printf("qemu (lorelei): failed to open host runtime \"%s\".\n", path);
+        return;
+    }
+
+    struct LORE_HOST_RUNTIME_SYMBOL {
+        const char *name;
+        gpointer sym;
+    };
+    struct LORE_HOST_RUNTIME_SYMBOL syms[] = {
+        {"LOREHOSTRT_setGetLastPThreadId", NULL},
+        {"LOREHOSTRT_setRunTaskEntry", NULL},
+        {"LOREHOSTRT_dispatchSyscall", NULL},
+        {"LOREHOSTRT_notifyThreadEntry", NULL},
+        {"LOREHOSTRT_notifyThreadExit", NULL},
+    };
+    for (int i = 0; i < ARRAY_SIZE(syms); i++) {
+        if (!g_module_symbol(handle, syms[i].name, &syms[i].sym)) {
+            printf("qemu (lorelei): failed to get address of '%s'\n", syms[i].name);
+            g_module_close(handle);
+            return;
+        }
+    }
+    lore_host_runtime_ctx.handle = handle;
+    lore_host_runtime_ctx.set_thread_getter = syms[0].sym;
+    lore_host_runtime_ctx.set_run_task_entry = syms[1].sym;
+    lore_host_runtime_ctx.dispatch_syscall = syms[2].sym;
+    lore_host_runtime_ctx.notify_thread_entry = syms[3].sym;
+    lore_host_runtime_ctx.notify_thread_exit = syms[4].sym;
+
+    lore_host_runtime_ctx.set_thread_getter(lorelei_get_last_pthread_id);
+    lore_host_runtime_ctx.set_run_task_entry(lorelei_run_task_entry);
 }
 
 static void target_cpu_free(void *obj)
