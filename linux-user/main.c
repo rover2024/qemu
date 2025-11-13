@@ -748,7 +748,7 @@ int main(int argc, char **argv, char **envp)
     init_paths(interp_prefix);
 
     // Initialize lorelei
-    init_lorelei();
+    qemu_lorelei_init();
 
     init_qemu_uname_release();
 

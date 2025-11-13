@@ -96,7 +96,7 @@ struct LORE_HOST_THREAD_CONTEXT {
 };
 extern __thread struct LORE_HOST_THREAD_CONTEXT lore_host_thread_ctx;
 
-void init_lorelei(void);
+void qemu_lorelei_init(void);
 
 /**
  * probe_guest_base:

@@ -207,7 +207,7 @@ enum {
     LORE_CLIENT_SYSCALL_NUM = 0x66CCFF,
 };
 
-enum LORE_RequestID {
+enum LORE_SyscallClient_RequestID {
     REQUEST_CHECK_CONNECTION = 1,
     REQUEST_LOG_MESSAGE,
 
@@ -221,6 +221,12 @@ enum LORE_RequestID {
 
     /// Reserved for internal use.
     REQUEST_RESUME_PROC,
+};
+
+enum Lore_SyscallClient_Return {
+    RETURN_ERROR = -1, // not used now
+    RETURN_OK = 0,
+    RETURN_NEXT_TASK,
 };
 
 struct LORE_ClientTask {
@@ -369,14 +375,14 @@ __thread struct LORE_HOST_THREAD_CONTEXT lore_host_thread_ctx;
 
 // Host library may call these functions to interact with guest environment, the guest runtime
 // should finally use `REQUEST_RESUME_PROC` to return to the host library.
-static void lorelei_run_task_entry(void *task) {
+static void qemu_lorelei_run_task_entry(void *task) {
     CPUX86State *env = cpu_env(thread_cpu);
-    env->regs[R_EAX] = ((struct LORE_ClientTask *) task)->id;
+    env->regs[R_EAX] = RETURN_NEXT_TASK;
     process_pending_signals(env);
     cpu_loop_shared(env);
 }
 
-static pthread_t lorelei_get_last_pthread_id(void) {
+static pthread_t qemu_lorelei_get_last_pthread_id(void) {
     return lore_host_thread_ctx.last_tid;
 }
 
@@ -392,7 +398,7 @@ void cpu_loop(CPUX86State *env)
 
 #include <gmodule.h>
 
-void init_lorelei(void) {
+void qemu_lorelei_init(void) {
     const char *root = getenv("LORELEI_ROOT");
     if (!root) {
         printf("qemu (lorelei): LORELEI_ROOT not defined.\n");
@@ -422,7 +428,7 @@ void init_lorelei(void) {
     };
     for (int i = 0; i < ARRAY_SIZE(syms); i++) {
         if (!g_module_symbol(handle, syms[i].name, &syms[i].sym)) {
-            printf("qemu (lorelei): failed to get address of '%s'\n", syms[i].name);
+            printf("qemu (lorelei): failed to get address of '%s'.\n", syms[i].name);
             g_module_close(handle);
             return;
         }
@@ -434,8 +440,8 @@ void init_lorelei(void) {
     lore_host_runtime_ctx.notify_thread_entry = syms[3].sym;
     lore_host_runtime_ctx.notify_thread_exit = syms[4].sym;
 
-    lore_host_runtime_ctx.set_thread_getter(lorelei_get_last_pthread_id);
-    lore_host_runtime_ctx.set_run_task_entry(lorelei_run_task_entry);
+    lore_host_runtime_ctx.set_thread_getter(qemu_lorelei_get_last_pthread_id);
+    lore_host_runtime_ctx.set_run_task_entry(qemu_lorelei_run_task_entry);
 }
 
 static void target_cpu_free(void *obj)
