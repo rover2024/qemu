@@ -369,9 +369,9 @@ static inline void cpu_loop_shared(CPUX86State *env) {
     }
 }
 
-struct LORE_HOST_RUNTIME_CONTEXT lore_host_runtime_ctx;
-
 __thread struct LORE_HOST_THREAD_CONTEXT lore_host_thread_ctx;
+
+struct LORE_HOST_RUNTIME_CONTEXT lore_host_runtime_ctx;
 
 // Host library may call these functions to interact with guest environment, the guest runtime
 // should finally use `REQUEST_RESUME_PROC` to return to the host library.
@@ -382,8 +382,8 @@ static void qemu_lorelei_run_task_entry(void *task) {
     cpu_loop_shared(env);
 }
 
-static pthread_t qemu_lorelei_get_last_pthread_id(void) {
-    return lore_host_thread_ctx.last_tid;
+static void *qemu_lorelei_get_thread_context(void) {
+    return &lore_host_thread_ctx;
 }
 
 void cpu_loop(CPUX86State *env)
@@ -420,7 +420,7 @@ void qemu_lorelei_init(void) {
         gpointer sym;
     };
     struct LORE_HOST_RUNTIME_SYMBOL syms[] = {
-        {"LOREHOSTRT_setGetLastPThreadId", NULL},
+        {"LOREHOSTRT_setGetThreadContext", NULL},
         {"LOREHOSTRT_setRunTaskEntry", NULL},
         {"LOREHOSTRT_dispatchSyscall", NULL},
         {"LOREHOSTRT_notifyThreadEntry", NULL},
@@ -434,13 +434,13 @@ void qemu_lorelei_init(void) {
         }
     }
     lore_host_runtime_ctx.handle = handle;
-    lore_host_runtime_ctx.set_thread_getter = syms[0].sym;
+    lore_host_runtime_ctx.set_get_thread_context = syms[0].sym;
     lore_host_runtime_ctx.set_run_task_entry = syms[1].sym;
     lore_host_runtime_ctx.dispatch_syscall = syms[2].sym;
     lore_host_runtime_ctx.notify_thread_entry = syms[3].sym;
     lore_host_runtime_ctx.notify_thread_exit = syms[4].sym;
 
-    lore_host_runtime_ctx.set_thread_getter(qemu_lorelei_get_last_pthread_id);
+    lore_host_runtime_ctx.set_get_thread_context(qemu_lorelei_get_thread_context);
     lore_host_runtime_ctx.set_run_task_entry(qemu_lorelei_run_task_entry);
 }
 
