@@ -375,7 +375,8 @@ struct LORE_HOST_RUNTIME_CONTEXT lore_host_runtime_ctx;
 
 // Host library may call these functions to interact with guest environment, the guest runtime
 // should finally use `REQUEST_RESUME_PROC` to return to the host library.
-static void qemu_lorelei_run_task_entry(void *task) {
+static void qemu_lorelei_run_task_entry(void *task, void *proc) {
+    (void ) proc;
     CPUX86State *env = cpu_env(thread_cpu);
     env->regs[R_EAX] = RETURN_NEXT_TASK;
     process_pending_signals(env);
