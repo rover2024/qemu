@@ -7,6 +7,11 @@
 
 void *lock_user(int type, abi_ulong guest_addr, ssize_t len, bool copy)
 {
+    // Do not check memory address in emulated page table, as
+    // host library may return host-allocated memory space that
+    // is invalid in page table.
+    return (void *) guest_addr;
+
     void *host_addr;
 
     guest_addr = cpu_untagged_addr(thread_cpu, guest_addr);
@@ -45,6 +50,9 @@ void unlock_user(void *host_ptr, abi_ulong guest_addr, ssize_t len)
 
 void *lock_user_string(abi_ulong guest_addr)
 {
+    // As above
+    return (void *) guest_addr;
+
     ssize_t len = target_strlen(guest_addr);
     if (len < 0) {
         return NULL;
