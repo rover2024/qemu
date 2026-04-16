@@ -608,6 +608,51 @@ static abi_long mmap_h_eq_g(abi_ulong start, abi_ulong len,
     void *p, *want_p = NULL;
     abi_ulong last;
 
+    if (guest_base == 0 && !(flags & (MAP_FIXED | MAP_FIXED_NOREPLACE))) {
+        uintptr_t host_limit = (uintptr_t)(void *)mmap_h_eq_g;
+        abi_ulong min_start, max_start, cand;
+
+        min_start = (mmap_min_addr > TARGET_PAGE_SIZE
+                     ? TARGET_PAGE_ALIGN(mmap_min_addr)
+                     : TARGET_PAGE_SIZE);
+        if (host_limit < len) {
+            errno = ENOMEM;
+            return -1;
+        }
+        max_start = (host_limit - len) & -TARGET_PAGE_SIZE;
+        if (max_start < min_start) {
+            errno = ENOMEM;
+            return -1;
+        }
+
+        flags |= MAP_FIXED_NOREPLACE;
+        cand = page_find_range_empty(min_start, max_start, len,
+                                     TARGET_PAGE_SIZE);
+        while (cand != (abi_ulong)-1) {
+            want_p = (void *)(uintptr_t)cand;
+            p = mmap(want_p, len, host_prot, flags, fd, offset);
+            if (p == want_p) {
+                start = cand;
+                goto done;
+            }
+            if (p == MAP_FAILED) {
+                if (errno != EEXIST) {
+                    return -1;
+                }
+            } else {
+                do_munmap(p, len);
+                errno = EEXIST;
+            }
+            if (cand == max_start) {
+                break;
+            }
+            cand = page_find_range_empty(cand + TARGET_PAGE_SIZE, max_start,
+                                         len, TARGET_PAGE_SIZE);
+        }
+        errno = ENOMEM;
+        return -1;
+    }
+
     if (start || (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE))) {
         want_p = g2h_untagged(start);
     }
@@ -623,6 +668,7 @@ static abi_long mmap_h_eq_g(abi_ulong start, abi_ulong len,
         return -1;
     }
 
+done:
     start = h2g(p);
     last = start + len - 1;
     return mmap_end(start, last, start, last, flags, page_flags);
