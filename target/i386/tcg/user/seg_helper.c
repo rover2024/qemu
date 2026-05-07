@@ -25,6 +25,8 @@
 #include "tcg/helper-tcg.h"
 #include "tcg/seg_helper.h"
 
+#include "rdtsc1.h"
+
 void helper_syscall(CPUX86State *env, int next_eip_addend)
 {
     CPUState *cs = env_cpu(env);
@@ -32,6 +34,14 @@ void helper_syscall(CPUX86State *env, int next_eip_addend)
     cs->exception_index = EXCP_SYSCALL;
     env->exception_is_int = 0;
     env->exception_next_eip = env->eip + next_eip_addend;
+
+    if (rdtsc_data.phase == RDP_GTL_END) {
+        uint64_t cur_tick = rdtsc();
+        rdtsc_data.syscall_ticks += cur_tick - rdtsc_data.last_tick;
+        rdtsc_data.last_tick = cur_tick;
+        rdtsc_data.phase = RDP_SYSCALL_HELPER;
+    }
+
     cpu_loop_exit(cs);
 }
 

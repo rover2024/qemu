@@ -4172,7 +4172,7 @@ static void gen_TZCNT(DisasContext *s, X86DecodedInsn *decode)
 
 static void gen_UD(DisasContext *s, X86DecodedInsn *decode)
 {
-    gen_illegal_opcode(s);
+    gen_helper_gtl_magic_ud2(tcg_env);
 }
 
 static void gen_VAESIMC(DisasContext *s, X86DecodedInsn *decode)

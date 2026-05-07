@@ -58,6 +58,8 @@
 #include "tcg/perf.h"
 #include "exec/page-vary.h"
 
+#include "rdtsc1.h"
+
 #ifdef CONFIG_SEMIHOSTING
 #include "semihosting/semihost.h"
 #endif
@@ -680,6 +682,8 @@ static int parse_args(int argc, char **argv)
 
     return optind;
 }
+
+struct RDTSC_DATA rdtsc_data;
 
 int main(int argc, char **argv, char **envp)
 {

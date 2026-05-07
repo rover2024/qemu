@@ -84,6 +84,8 @@
 #include <sys/kcov.h>
 #endif
 
+#include "rdtsc1.h"
+
 #define termios host_termios
 #define termios2 host_termios2
 #define winsize host_winsize
@@ -9653,6 +9655,7 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
             return -QEMU_ERESTARTSYS;
         }
 
+        rdtsc_over();
         pthread_mutex_lock(&clone_lock);
 
         if (CPU_NEXT(first_cpu)) {
@@ -11607,6 +11610,7 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
         /* new thread calls */
     case TARGET_NR_exit_group:
         preexit_cleanup(cpu_env, arg1);
+        rdtsc_over();
         return get_errno(exit_group(arg1));
 #endif
     case TARGET_NR_setdomainname:

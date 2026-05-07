@@ -23,6 +23,8 @@
 #include "tcg/tcg-op-common.h"
 #include "plugin.h"
 
+#include "rdtsc1.h"
+
 struct qemu_plugin_cb {
     struct qemu_plugin_ctx *ctx;
     union qemu_plugin_cb_sig f;
@@ -610,6 +612,13 @@ qemu_plugin_vcpu_syscall_filter(CPUState *cpu, int64_t num, uint64_t a1,
 
     qemu_plugin_set_cb_flags(cpu, QEMU_PLUGIN_CB_RW_REGS_PC);
 
+    if (rdtsc_data.phase == RDP_SYSCALL_HELPER) {
+        uint64_t cur_tick = rdtsc();
+        rdtsc_data.dispatch_ticks += cur_tick - rdtsc_data.last_tick;
+        rdtsc_data.last_tick = cur_tick;
+        rdtsc_data.phase = RDP_HOST_START;
+    }
+
     QLIST_FOREACH_SAFE_RCU(cb, &plugin.cb_lists[ev], entry, next) {
         qemu_plugin_vcpu_syscall_filter_cb_t func = cb->f.vcpu_syscall_filter;
 
@@ -618,6 +627,13 @@ qemu_plugin_vcpu_syscall_filter(CPUState *cpu, int64_t num, uint64_t a1,
             filtered = true;
             break;
         }
+    }
+
+    if (rdtsc_data.phase == RDP_HOST_START) {
+        uint64_t cur_tick = rdtsc();
+        rdtsc_data.host_ticks += cur_tick - rdtsc_data.last_tick;
+        rdtsc_data.last_tick = cur_tick;
+        rdtsc_data.phase = RDP_HOST_END;
     }
 
     qemu_plugin_set_cb_flags(cpu, QEMU_PLUGIN_CB_NO_REGS);

@@ -24,6 +24,8 @@
 #include "exec/cputlb.h"
 #include "helper-tcg.h"
 
+#include "rdtsc1.h"
+
 /*
  * NOTE: the translator must set DisasContext.cc_op to CC_OP_EFLAGS
  * after generating a call to a helper that uses this.
@@ -59,6 +61,39 @@ void helper_cpuid(CPUX86State *env)
     env->regs[R_EBX] = ebx;
     env->regs[R_ECX] = ecx;
     env->regs[R_EDX] = edx;
+}
+
+void helper_gtl_magic_ud2(CPUX86State *env)
+{
+    uint64_t op = env->regs[R_EAX];
+    // uint64_t tag = env->regs[R_EBX];
+
+    // printf("[gtl] ud2 op=0x%llx tag=0x%llx rip=0x%llx\n",
+    //        (unsigned long long)op,
+    //        (unsigned long long)tag,
+    //        (unsigned long long)env->eip);
+
+    // if (op == 1 || op == 2) {
+    //     return;
+    // }
+
+    if (op == 1) {
+        rdtsc_data.phase = RDP_GTL_START;
+        rdtsc_data.last_tick = rdtsc();
+        return;
+    }
+
+    if (op == 2) {
+        if (rdtsc_data.phase == RDP_GTL_START) {
+            uint64_t cur_tick = rdtsc();
+            rdtsc_data.gtl_ticks += cur_tick - rdtsc_data.last_tick;
+            rdtsc_data.last_tick = cur_tick;
+            rdtsc_data.phase = RDP_GTL_END;
+        }
+        return;
+    }
+
+    raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
 }
 
 void helper_rdtsc(CPUX86State *env)
