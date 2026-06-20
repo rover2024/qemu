@@ -1046,6 +1046,136 @@ Count traps
 This plugin counts the number of interrupts (asynchronous events), exceptions
 (synchronous events) and host calls (e.g. semihosting) per cpu.
 
+Host Library Calls
+..................
+
+``contrib/plugins/dlcall.c``
+
+This user-mode plugin lets a ``linux-user`` guest call functions in the
+host's native shared libraries instead of emulating them. The guest issues a
+single reserved "magic" system call; the plugin claims it with a vCPU syscall
+filter and performs the requested host-side operation, then tells QEMU the
+syscall is consumed so the host kernel never sees it.
+
+The operations are a handful of primitives: query a host attribute,
+``dlopen``/``dlclose`` a host library, ``dlsym`` a symbol, read the last
+``dlerror``, and call a resolved ``void(void *, void *)`` host function.
+
+.. warning::
+   The guest can load arbitrary host libraries and execute arbitrary host
+   code with arbitrary arguments, i.e. full code execution in the QEMU host
+   process. The plugin is not a sandbox and provides no isolation; load it
+   only for guests you fully trust.
+
+.. warning::
+   The plugin requires ``guest_base == 0`` (qemu-user's default). Pointer
+   operands are dereferenced as host addresses directly, and the invoked host
+   functions dereference guest pointers without translation, so the guest and
+   host must share a single address space.
+
+The example below compresses a buffer with the host's real zlib. It has two
+parts: a host adapter, an ordinary native shared library that exposes the
+target with the ``void(void *, void *)`` signature the plugin can call, and
+a guest program that loads it and issues the magic syscalls. Because the
+plugin only ever calls a ``void(void *, void *)`` function, an adapter whose
+target takes more than two operands packs them into a struct that the
+adapter unpacks before calling the real ``compress``. The host adapter is
+compiled on the host and linked with zlib:
+
+.. code-block:: c
+
+  /* zadapter.c */
+  #include <zlib.h>
+
+  struct zargs {
+      const void *src;
+      unsigned long src_len;
+      void *dst;
+      unsigned long *dst_len;   /* in: capacity; out: compressed size */
+  };
+
+  void zcompress(void *arg1, void *arg2)
+  {
+      struct zargs *a = arg1;
+      *(int *) arg2 = compress(a->dst, a->dst_len, a->src, a->src_len);
+  }
+
+The guest program prepares the data, loads the adapter, resolves the symbol,
+and invokes it with a pointer to the same struct layout:
+
+.. code-block:: c
+
+  /* guest.c */
+  #include <dlfcn.h>
+  #include <stdio.h>
+  #include <string.h>
+  #include <sys/syscall.h>
+  #include <unistd.h>
+
+  enum {
+      DLCALL_ID_LOAD_LIBRARY = 1,
+      DLCALL_ID_GET_PROC_ADDRESS = 2,
+      DLCALL_ID_INVOKE_PROC = 5,
+  };
+
+  struct zargs {
+      const void *src;
+      unsigned long src_len;
+      void *dst;
+      unsigned long *dst_len;
+  };
+
+  int main(void)
+  {
+      char src[1000], dst[2000];
+      unsigned long dst_len = sizeof(dst);
+      void *lib = NULL, *proc = NULL;
+      int ret = -1;
+
+      memset(src, 'A', sizeof(src));   /* the data to compress */
+      struct zargs a = { src, sizeof(src), dst, &dst_len };
+
+      syscall(4096, DLCALL_ID_LOAD_LIBRARY, "libzadapter.so", RTLD_NOW, &lib);
+      syscall(4096, DLCALL_ID_GET_PROC_ADDRESS, lib, "zcompress", &proc);
+      syscall(4096, DLCALL_ID_INVOKE_PROC, proc, &a, &ret);
+
+      printf("compressed %lu bytes to %lu (ret %d)\n",
+             a.src_len, dst_len, ret);
+      return 0;
+  }
+
+Build both halves, then run the guest under QEMU with the adapter on the
+host library path:
+
+.. code-block:: console
+
+  $ gcc -shared -fPIC zadapter.c -o libzadapter.so -lz
+  $ x86_64-linux-gnu-gcc guest.c -o guest
+  $ LD_LIBRARY_PATH=. \
+      qemu-x86_64 -plugin contrib/plugins/libdlcall.so ./guest
+  compressed 1000 bytes to 17 (ret 0)
+
+This is the lowest-level way to drive the plugin. For larger uses, such as
+wrapping a whole library, or several at once, it helps to make the
+guest-side syscall wrappers and the host-side unpacking modular, to generate
+that guest/host glue automatically, and to add a reentry mechanism so a host
+function can call back into a guest callback.
+
+.. list-table:: dlcall arguments
+  :widths: 20 80
+  :header-rows: 1
+
+  * - Option
+    - Description
+  * - syscall_num=N
+    - Use N as the magic syscall number instead of the default of 4096. N
+      must be large enough not to collide with a real syscall.
+
+A complete reference implementation of the userspace side that takes this
+approach, with worked examples (a stock ``minizip`` run against the host's
+zlib, and OpenGL applications), is available `here
+<https://github.com/rover2024/qemu-passthrough-test>`__.
+
 Other emulation features
 ------------------------
 
