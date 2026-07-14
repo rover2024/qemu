@@ -69,6 +69,7 @@
 
 char *exec_path;
 char real_exec_path[PATH_MAX];
+void lorelei_intercept_init(const char *exec_path);
 
 static bool opt_one_insn_per_tb;
 static unsigned long opt_tb_size;
@@ -777,6 +778,8 @@ int main(int argc, char **argv, char **envp)
     if (!realpath(exec_path, real_exec_path)) {
         printf("Could not resolve %s\n", exec_path);
     }
+
+    lorelei_intercept_init(exec_path);
 
     /*
      * get binfmt_misc flags

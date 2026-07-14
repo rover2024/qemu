@@ -13,6 +13,7 @@ linux_user_ss.add(files(
   'fd-trans.c',
   'linuxload.c',
   'main.c',
+  'lorelei-intercept.c',
   'mmap.c',
   'signal.c',
   'strace.c',

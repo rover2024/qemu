@@ -3504,12 +3504,29 @@ static void i386_tr_insn_start(DisasContextBase *dcbase, CPUState *cpu)
     tcg_gen_insn_start(pc_arg, dc->cc_op, 0);
 }
 
+#ifdef CONFIG_USER_ONLY
+uint64_t lorelei_redirect_lookup(uint64_t pc);
+#endif
+
 static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
 {
     DisasContext *dc = container_of(dcbase, DisasContext, base);
     bool orig_cc_op_dirty = dc->cc_op_dirty;
     CCOp orig_cc_op = dc->cc_op;
     target_ulong orig_pc_save = dc->pc_save;
+
+#ifdef CONFIG_USER_ONLY
+    if (dc->base.pc_next == dc->base.pc_first) {
+        uint64_t lore_tgt = lorelei_redirect_lookup(dc->base.pc_next);
+        if (lore_tgt) {
+            gen_update_cc_op(dc);
+            gen_op_jmp_v(dc, tcg_constant_tl(lore_tgt));
+            dc->base.pc_next += 1; /* non-zero TB size */
+            dc->base.is_jmp = DISAS_JUMP;
+            return;
+        }
+    }
+#endif
 
 #ifdef TARGET_VSYSCALL_PAGE
     /*
