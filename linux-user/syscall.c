@@ -9736,6 +9736,9 @@ _syscall3(int, sys_fspick, int, dfd, const char *, path, unsigned int, flags)
  * of syscall results, can be performed.
  * All errnos that do_syscall() returns must be -TARGET_<errcode>.
  */
+void lorelei_register_thunk(const char *id, uint64_t addr);
+uint64_t lorelei_host_call(const char *name, int argc, const uint64_t *argv);
+
 static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
                             abi_long arg2, abi_long arg3, abi_long arg4,
                             abi_long arg5, abi_long arg6, abi_long arg7,
@@ -9754,6 +9757,26 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
     struct statfs stfs;
 #endif
     void *p;
+
+    if (num == 4097) { /* lorelei: register thunk id -> addr */
+        char *id = lock_user_string(arg1);
+        if (id) { lorelei_register_thunk(id, (uint64_t)arg2); unlock_user(id, arg1, 0); }
+        return 0;
+    }
+    if (num == 4098) { /* lorelei: host call name(argv[0..argc]) -> *ret */
+        char *name = lock_user_string(arg1);
+        int hc_argc = (int)arg2;
+        uint64_t hc_argv[6] = {0};
+        uint64_t *g = lock_user(VERIFY_READ, arg3, sizeof(uint64_t) * 6, 1);
+        uint64_t r;
+        for (int i = 0; g && i < hc_argc && i < 6; i++) { hc_argv[i] = g[i]; }
+        r = name ? lorelei_host_call(name, hc_argc, hc_argv) : 0;
+        if (g) { unlock_user(g, arg3, 0); }
+        if (name) { unlock_user(name, arg1, 0); }
+        { uint64_t *rp = lock_user(VERIFY_WRITE, arg4, sizeof(uint64_t), 0);
+          if (rp) { *rp = r; unlock_user(rp, arg4, sizeof(uint64_t)); } }
+        return 0;
+    }
 
     switch(num) {
     case TARGET_NR_exit:

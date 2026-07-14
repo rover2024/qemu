@@ -2,9 +2,9 @@
 #ifndef LINUX_USER_LORELEI_INTERCEPT_H
 #define LINUX_USER_LORELEI_INTERCEPT_H
 
-/* Read <exec_path>.lorelei.json and populate the redirect table. */
 void lorelei_intercept_init(const char *exec_path);
-/* Redirect target guest address for a marked entry PC, or 0 if none. */
 uint64_t lorelei_redirect_lookup(uint64_t pc);
+void lorelei_register_thunk(const char *id, uint64_t addr);
+uint64_t lorelei_host_call(const char *name, int argc, const uint64_t *argv);
 
 #endif

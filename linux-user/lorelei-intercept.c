@@ -1,13 +1,12 @@
 /*
- * Lorelei address-based interception (Slice 1).
+ * Lorelei address-based interception (slice 2).
  *
- * Reads a JSON sidecar next to the guest executable that maps a marked guest
- * entry address to a redirect target address. The i386 translator consults
- * this table so that a stripped, statically-linked library function can be
- * diverted to a Lorelei thunk instead of being translated.
- *
- * Sidecar format (<exec_path>.lorelei.json):
- *   { "intercepts": [ { "entry": "0x401c60", "target": "0x402000" } ] }
+ * Sidecar <exec_path>.lorelei.json maps a marked guest entry address to a
+ * thunk id:  { "intercepts": [ { "entry": "0x401cb0", "id": "crc32" } ] }
+ * A preloaded guest thunk registers "id -> its runtime address" via a magic
+ * syscall; the i386 translator then diverts the marked entry to that address.
+ * The thunk forwards to the host library through another magic syscall handled
+ * by lorelei_host_call().
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -17,25 +16,66 @@
 #include "qobject/qdict.h"
 #include "qobject/qlist.h"
 #include "lorelei-intercept.h"
+#include <dlfcn.h>
 
-#define LORE_MAX_REDIRS 256
+#define LORE_MAX 256
 
 typedef struct {
     uint64_t entry;
-    uint64_t target;
+    char id[64];
+    uint64_t target;   /* resolved thunk address, 0 until registered */
 } LoreRedir;
 
-static LoreRedir lore_redirs[LORE_MAX_REDIRS];
-static int lore_n_redirs;
+static LoreRedir tbl[LORE_MAX];
+static int lore_n;
 
 uint64_t lorelei_redirect_lookup(uint64_t pc)
 {
-    for (int i = 0; i < lore_n_redirs; i++) {
-        if (lore_redirs[i].entry == pc) {
-            return lore_redirs[i].target;
+    for (int i = 0; i < lore_n; i++) {
+        if (tbl[i].entry == pc) {
+            return tbl[i].target;   /* 0 while unresolved -> no redirect yet */
         }
     }
     return 0;
+}
+
+void lorelei_register_thunk(const char *id, uint64_t addr)
+{
+    int hit = 0;
+    for (int i = 0; i < lore_n; i++) {
+        if (strcmp(tbl[i].id, id) == 0) {
+            tbl[i].target = addr;
+            hit++;
+        }
+    }
+    warn_report("lorelei: register '%s' -> 0x%" PRIx64 " (%d entries)",
+                id, addr, hit);
+}
+
+uint64_t lorelei_host_call(const char *name, int argc, const uint64_t *argv)
+{
+    static void *libz;
+    void *fn;
+    uint64_t a[6] = {0, 0, 0, 0, 0, 0};
+    typedef uint64_t (*fn6)(uint64_t, uint64_t, uint64_t,
+                            uint64_t, uint64_t, uint64_t);
+
+    if (!libz) {
+        libz = dlopen("libz.so.1", RTLD_NOW | RTLD_GLOBAL);
+        if (!libz) {
+            warn_report("lorelei: dlopen libz.so.1 failed: %s", dlerror());
+            return 0;
+        }
+    }
+    fn = dlsym(libz, name);
+    if (!fn) {
+        warn_report("lorelei: dlsym %s failed", name);
+        return 0;
+    }
+    for (int i = 0; i < argc && i < 6; i++) {
+        a[i] = argv[i];
+    }
+    return ((fn6)fn)(a[0], a[1], a[2], a[3], a[4], a[5]);
 }
 
 void lorelei_intercept_init(const char *exec_path)
@@ -47,7 +87,7 @@ void lorelei_intercept_init(const char *exec_path)
     QObject *root;
     QDict *top;
     QList *list;
-    const QListEntry *ent;
+    const QListEntry *it;
 
     if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
         return;
@@ -67,23 +107,24 @@ void lorelei_intercept_init(const char *exec_path)
         return;
     }
 
-    QLIST_FOREACH_ENTRY(list, ent) {
-        QDict *it = qobject_to(QDict, qlist_entry_obj(ent));
-        const char *es, *ts;
-        if (!it) {
+    QLIST_FOREACH_ENTRY(list, it) {
+        QDict *d = qobject_to(QDict, qlist_entry_obj(it));
+        const char *es, *id;
+        if (!d) {
             continue;
         }
-        es = qdict_get_try_str(it, "entry");
-        ts = qdict_get_try_str(it, "target");
-        if (!es || !ts) {
+        es = qdict_get_try_str(d, "entry");
+        id = qdict_get_try_str(d, "id");
+        if (!es || !id) {
             continue;
         }
-        if (lore_n_redirs < LORE_MAX_REDIRS) {
-            lore_redirs[lore_n_redirs].entry = strtoull(es, NULL, 0);
-            lore_redirs[lore_n_redirs].target = strtoull(ts, NULL, 0);
-            lore_n_redirs++;
+        if (lore_n < LORE_MAX) {
+            tbl[lore_n].entry = strtoull(es, NULL, 0);
+            g_strlcpy(tbl[lore_n].id, id, sizeof(tbl[lore_n].id));
+            tbl[lore_n].target = 0;
+            lore_n++;
         }
     }
     qobject_unref(root);
-    warn_report("lorelei: loaded %d redirect(s) from %s", lore_n_redirs, path);
+    warn_report("lorelei: loaded %d intercept(s) from %s", lore_n, path);
 }
