@@ -9736,9 +9736,6 @@ _syscall3(int, sys_fspick, int, dfd, const char *, path, unsigned int, flags)
  * of syscall results, can be performed.
  * All errnos that do_syscall() returns must be -TARGET_<errcode>.
  */
-void lorelei_register_thunk(const char *id, uint64_t addr);
-uint64_t lorelei_host_call(const char *name, int argc, const uint64_t *argv);
-
 static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
                             abi_long arg2, abi_long arg3, abi_long arg4,
                             abi_long arg5, abi_long arg6, abi_long arg7,
@@ -9757,26 +9754,6 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
     struct statfs stfs;
 #endif
     void *p;
-
-    if (num == 4097) { /* lorelei: register thunk id -> addr */
-        char *id = lock_user_string(arg1);
-        if (id) { lorelei_register_thunk(id, (uint64_t)arg2); unlock_user(id, arg1, 0); }
-        return 0;
-    }
-    if (num == 4098) { /* lorelei: host call name(argv[0..argc]) -> *ret */
-        char *name = lock_user_string(arg1);
-        int hc_argc = (int)arg2;
-        uint64_t hc_argv[6] = {0};
-        uint64_t *g = lock_user(VERIFY_READ, arg3, sizeof(uint64_t) * 6, 1);
-        uint64_t r;
-        for (int i = 0; g && i < hc_argc && i < 6; i++) { hc_argv[i] = g[i]; }
-        r = name ? lorelei_host_call(name, hc_argc, hc_argv) : 0;
-        if (g) { unlock_user(g, arg3, 0); }
-        if (name) { unlock_user(name, arg1, 0); }
-        { uint64_t *rp = lock_user(VERIFY_WRITE, arg4, sizeof(uint64_t), 0);
-          if (rp) { *rp = r; unlock_user(rp, arg4, sizeof(uint64_t)); } }
-        return 0;
-    }
 
     switch(num) {
     case TARGET_NR_exit:
@@ -14652,6 +14629,41 @@ static bool send_through_syscall_filters(CPUState *cpu, int num,
     return filtered;
 }
 
+void lorelei_register_thunk(const char *id, uint64_t addr);
+uint64_t lorelei_host_call(const char *lib, const char *name, int argc, const uint64_t *argv);
+
+/* Lorelei ops ride the dlcall syscall (4096) as primary id arg1, handled in
+ * core (before the plugin filter) so the redirect table stays in the emulator.
+ * Requires guest_base == 0 (guest ptr == host ptr), like the dlcall plugin. */
+#define LORELEI_OP_HOSTCALL 0x100
+#define LORELEI_OP_REGISTER 0x101
+struct LoreHostCall { uint64_t lib, name, argc, argv, ret; };
+
+static bool lorelei_try_syscall(int num, abi_long a1, abi_long a2, abi_long a3,
+                                abi_long *out)
+{
+    if (num != 4096) {
+        return false;
+    }
+    switch (a1) {
+    case LORELEI_OP_REGISTER:
+        lorelei_register_thunk((const char *)(uintptr_t)a2, (uint64_t)a3);
+        *out = 0;
+        return true;
+    case LORELEI_OP_HOSTCALL: {
+        struct LoreHostCall *rq = (struct LoreHostCall *)(uintptr_t)a2;
+        *(uint64_t *)(uintptr_t)rq->ret =
+            lorelei_host_call((const char *)(uintptr_t)rq->lib,
+                              (const char *)(uintptr_t)rq->name,
+                              (int)rq->argc, (const uint64_t *)(uintptr_t)rq->argv);
+        *out = 0;
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
                     abi_long arg2, abi_long arg3, abi_long arg4,
                     abi_long arg5, abi_long arg6, abi_long arg7,
@@ -14660,6 +14672,13 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
     CPUState *cpu = env_cpu(cpu_env);
     TaskState *ts = get_task_state(cpu);
     abi_long ret;
+
+    if (num == 4096) {
+        abi_long lret;
+        if (lorelei_try_syscall(num, arg1, arg2, arg3, &lret)) {
+            return lret;
+        }
+    }
 
 #ifdef DEBUG_ERESTARTSYS
     /* Debug-only code for exercising the syscall-restart code paths

@@ -52,24 +52,33 @@ void lorelei_register_thunk(const char *id, uint64_t addr)
                 id, addr, hit);
 }
 
-uint64_t lorelei_host_call(const char *name, int argc, const uint64_t *argv)
+uint64_t lorelei_host_call(const char *lib, const char *name,
+                          int argc, const uint64_t *argv)
 {
-    static void *libz;
-    void *fn;
+    static struct { char lib[64]; void *h; } cache[16];
+    static int nc;
+    void *h = NULL, *fn;
     uint64_t a[6] = {0, 0, 0, 0, 0, 0};
     typedef uint64_t (*fn6)(uint64_t, uint64_t, uint64_t,
                             uint64_t, uint64_t, uint64_t);
 
-    if (!libz) {
-        libz = dlopen("libz.so.1", RTLD_NOW | RTLD_GLOBAL);
-        if (!libz) {
-            warn_report("lorelei: dlopen libz.so.1 failed: %s", dlerror());
+    for (int i = 0; i < nc; i++) {
+        if (strcmp(cache[i].lib, lib) == 0) { h = cache[i].h; break; }
+    }
+    if (!h) {
+        h = dlopen(lib, RTLD_NOW | RTLD_GLOBAL);
+        if (!h) {
+            warn_report("lorelei: dlopen %s failed: %s", lib, dlerror());
             return 0;
         }
+        if (nc < 16) {
+            g_strlcpy(cache[nc].lib, lib, sizeof(cache[nc].lib));
+            cache[nc].h = h; nc++;
+        }
     }
-    fn = dlsym(libz, name);
+    fn = dlsym(h, name);
     if (!fn) {
-        warn_report("lorelei: dlsym %s failed", name);
+        warn_report("lorelei: dlsym %s in %s failed", name, lib);
         return 0;
     }
     for (int i = 0; i < argc && i < 6; i++) {
